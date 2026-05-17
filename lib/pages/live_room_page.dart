@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import '../models/model_data.dart';
+import '../services/api_service.dart';
 import '../services/favorites_service.dart';
 import '../widgets/chat_widget.dart';
 
@@ -49,9 +50,25 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
       _hasError = false;
     });
 
-    final hlsUrl = widget.model.hlsBestUrl.isNotEmpty
-        ? widget.model.hlsBestUrl
-        : widget.model.hlsUrl;
+    final api = ApiService();
+    final liveUrl = await api.getLiveHlsUrl(
+      widget.model.username,
+      fallbackStreamName: widget.model.streamName.isNotEmpty
+          ? widget.model.streamName
+          : '${widget.model.id}',
+    );
+    final hlsUrl = liveUrl ?? widget.model.hlsUrl;
+
+    if (hlsUrl.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _hasError = true;
+          _errorMessage = '主播未开播或获取直播流失败';
+        });
+      }
+      return;
+    }
 
     try {
       _videoController = VideoPlayerController.networkUrl(
@@ -60,7 +77,12 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
           'User-Agent':
               'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
           'Referer': 'https://zh.stripchat.com/',
+          'Origin': 'https://zh.stripchat.com',
         },
+        videoPlayerOptions: VideoPlayerOptions(
+          mixWithOthers: false,
+          allowBackgroundPlayback: false,
+        ),
       );
 
       await _videoController!.initialize();
@@ -69,6 +91,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
         videoPlayerController: _videoController!,
         autoPlay: true,
         looping: false,
+        isLive: true,
         showControls: true,
         showOptions: false,
         allowFullScreen: true,
@@ -116,7 +139,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
         setState(() {
           _isLoading = false;
           _hasError = true;
-          _errorMessage = '无法加载直播流';
+          _errorMessage = '主播可能已下播';
         });
       }
     }

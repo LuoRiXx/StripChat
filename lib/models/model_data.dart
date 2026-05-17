@@ -56,20 +56,12 @@ class ModelData {
   }
 
   String get hlsUrl {
-    if (hlsPlaylist.isNotEmpty) return hlsPlaylist;
-    if (id > 0) {
-      return 'https://edge-hls.doppiocdn.com/hls/$id/master/${id}_auto.m3u8';
-    }
-    return '';
+    final sn = streamName.isNotEmpty ? streamName : '$id';
+    if (sn.isEmpty || sn == '0') return '';
+    return 'https://edge-hls.doppiocdn.com/hls/$sn/master/$sn.m3u8';
   }
 
-  String get hlsBestUrl {
-    if (presets.isNotEmpty) {
-      final best = presets.first;
-      return 'https://edge-hls.doppiocdn.com/hls/$id/master/${id}_$best.m3u8';
-    }
-    return hlsUrl;
-  }
+  String get hlsBestUrl => hlsUrl;
 
   factory ModelData.fromJson(Map<String, dynamic> json) {
     final id = json['id'] ?? 0;

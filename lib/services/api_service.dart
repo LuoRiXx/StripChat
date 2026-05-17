@@ -25,12 +25,16 @@ class ApiService {
   }
 
   Map<String, String> get _headers => {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'User-Agent':
             'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
         'Referer': '$baseUrl/',
         'Origin': baseUrl,
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+        'X-Requested-With': 'XMLHttpRequest',
         if (_jwtToken != null) 'Authorization': 'Bearer $_jwtToken',
         if (_csrfToken != null) 'X-Csrf-Token': _csrfToken!,
         'Cookie': _buildCookie(),
@@ -261,7 +265,9 @@ class ApiService {
       final uniq = _generateUniq();
       final uri =
           Uri.parse('$apiBase/v1/broadcasts/$username?uniq=$uniq');
-      final response = await http.get(uri, headers: _headers);
+      final response = await http
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 6));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -269,6 +275,21 @@ class ApiService {
       }
     } catch (e) {
       // Silently fail
+    }
+    return null;
+  }
+
+  Future<String?> getLiveHlsUrl(String username, {String? fallbackStreamName}) async {
+    final info = await getBroadcastInfo(username);
+    if (info != null) {
+      final isLive = info['isLive'] == true || info['status'] == 'public';
+      final streamName = info['streamName']?.toString() ?? '';
+      if (isLive && streamName.isNotEmpty) {
+        return 'https://edge-hls.doppiocdn.com/hls/$streamName/master/$streamName.m3u8';
+      }
+    }
+    if (fallbackStreamName != null && fallbackStreamName.isNotEmpty) {
+      return 'https://edge-hls.doppiocdn.com/hls/$fallbackStreamName/master/$fallbackStreamName.m3u8';
     }
     return null;
   }
