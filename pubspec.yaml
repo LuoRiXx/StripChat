@@ -1,0 +1,31 @@
+name: stripchat_app
+description: "StripChat Live Streaming Client"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  http: ^1.2.0
+  shared_preferences: ^2.3.0
+  cached_network_image: ^3.3.1
+  provider: ^6.1.2
+  video_player: ^2.9.0
+  chewie: ^1.8.0
+  web_socket_channel: ^3.0.0
+  flutter_staggered_grid_view: ^0.7.0
+  pull_to_refresh: ^2.0.0
+  shimmer: ^3.0.0
+  fluttertoast: ^8.2.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
