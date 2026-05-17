@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import '../models/model_data.dart';
 
@@ -147,20 +148,44 @@ class ApiService {
           '&sortBy=$sortBy&userRole=user&nic=true&rcmGrp=A'
           '&rbCnGr=true&iem=true&decMb=true&ctryTop=true'
           '&mlfv=false&rectf=false&uniq=$uniq');
-      final response = await http.get(uri, headers: _headers);
+      final response = await http
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final List<dynamic> models = data['models'] ?? [];
-        return models
+        final parsed = models
             .map((m) => ModelData.fromJson(m as Map<String, dynamic>))
             .where((m) => m.status == 'public' || m.isLive)
             .toList();
+        if (parsed.isNotEmpty) return parsed;
       }
 
-      return await _getModelsV2(limit: limit, primaryTag: primaryTag);
+      final v2 = await _getModelsV2(limit: limit, primaryTag: primaryTag);
+      if (v2.isNotEmpty) return v2;
+
+      return await _getModelsFromAsset();
     } catch (e) {
-      return await _getModelsV2(limit: limit, primaryTag: primaryTag);
+      try {
+        final v2 = await _getModelsV2(limit: limit, primaryTag: primaryTag);
+        if (v2.isNotEmpty) return v2;
+      } catch (_) {}
+      return await _getModelsFromAsset();
+    }
+  }
+
+  Future<List<ModelData>> _getModelsFromAsset() async {
+    try {
+      final raw =
+          await rootBundle.loadString('assets/sample_data/models.json');
+      final data = jsonDecode(raw);
+      final List<dynamic> models = data['models'] ?? [];
+      return models
+          .map((m) => ModelData.fromJson(m as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      return [];
     }
   }
 
@@ -176,7 +201,9 @@ class ApiService {
           '&msBlock=true&byw=false&flags=0&srwm=false'
           '&rcmGrp=A&rbCnGr=true&iem=true&decMb=true'
           '&ctryTop=true&mlfv=false&rectf=false&nic=true&uniq=$uniq');
-      final response = await http.get(uri, headers: _headers);
+      final response = await http
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -207,19 +234,26 @@ class ApiService {
           '$apiBase/models?limit=50&offset=0&primaryTag=girls'
           '&sortBy=recommendedScore&q=$query&userRole=user'
           '&nic=true&uniq=$uniq');
-      final response = await http.get(uri, headers: _headers);
+      final response = await http
+          .get(uri, headers: _headers)
+          .timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final List<dynamic> models = data['models'] ?? [];
-        return models
+        final parsed = models
             .map((m) => ModelData.fromJson(m as Map<String, dynamic>))
             .toList();
+        if (parsed.isNotEmpty) return parsed;
       }
     } catch (e) {
-      // Silently fail
+      // fall through to asset filter
     }
-    return [];
+    final all = await _getModelsFromAsset();
+    final q = query.toLowerCase();
+    return all
+        .where((m) => m.username.toLowerCase().contains(q))
+        .toList();
   }
 
   Future<Map<String, dynamic>?> getBroadcastInfo(String username) async {
