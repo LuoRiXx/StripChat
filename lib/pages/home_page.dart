@@ -70,6 +70,12 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
+class _PrimaryTag {
+  final String label;
+  final String value;
+  const _PrimaryTag(this.label, this.value);
+}
+
 class _ModelListTab extends StatefulWidget {
   const _ModelListTab();
 
@@ -78,148 +84,123 @@ class _ModelListTab extends StatefulWidget {
 }
 
 class _ModelListTabState extends State<_ModelListTab>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   final ApiService _api = ApiService();
-  List<ModelData> _models = [];
+  List<ModelBlock> _blocks = [];
+  List<ModelData> _searchResults = [];
+  bool _isSearching = false;
   bool _isLoading = true;
-  bool _isLoadingMore = false;
   bool _isRefreshing = false;
-  int _offset = 0;
-  final int _limit = 60;
-  String _currentTag = 'girls';
-  String _sortBy = 'recommendedScore';
   Timer? _refreshTimer;
-  final ScrollController _scrollController = ScrollController();
+
   final TextEditingController _searchController = TextEditingController();
 
-  final List<Map<String, String>> _tags = [
-    {'label': '🔥 热门', 'value': 'girls', 'sort': 'viewersCount'},
-    {'label': '女生', 'value': 'girls', 'sort': 'recommendedScore'},
-    {'label': '男生', 'value': 'guys', 'sort': 'recommendedScore'},
-    {'label': '情侣', 'value': 'couples', 'sort': 'recommendedScore'},
-    {'label': '变性', 'value': 'trans', 'sort': 'recommendedScore'},
-    {'label': '新人', 'value': 'girls', 'sort': 'isNew'},
+  static const List<_PrimaryTag> _primaryTags = [
+    _PrimaryTag('女主播', 'girls'),
+    _PrimaryTag('情侣', 'couples'),
+    _PrimaryTag('男主播', 'guys'),
+    _PrimaryTag('变性', 'trans'),
   ];
-  int _selectedTagIndex = 1;
+  late TabController _tabController;
+  String _currentTag = 'girls';
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _scrollController.addListener(_onScroll);
-    _loadModels();
-    // 每30秒后台静默刷新一次
-    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+    _tabController = TabController(length: _primaryTags.length, vsync: this);
+    _tabController.addListener(() {
+      if (!_tabController.indexIsChanging) return;
+      final newTag = _primaryTags[_tabController.index].value;
+      if (newTag != _currentTag) {
+        setState(() => _currentTag = newTag);
+        _loadBlocks();
+      }
+    });
+    _loadBlocks();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 45), (_) {
       _silentRefresh();
     });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      _silentRefresh();
-    }
+    if (state == AppLifecycleState.resumed) _silentRefresh();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _refreshTimer?.cancel();
-    _scrollController.dispose();
+    _tabController.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
-  void _onScroll() {
-    if (_scrollController.position.pixels >=
-        _scrollController.position.maxScrollExtent - 300) {
-      _loadMore();
-    }
-  }
-
-  Future<void> _loadModels() async {
+  Future<void> _loadBlocks() async {
     if (!mounted) return;
-    setState(() {
-      _isLoading = true;
-      _offset = 0;
-    });
-
-    final models = await _api.getModels(
-      limit: _limit,
-      offset: 0,
-      primaryTag: _currentTag,
-      sortBy: _sortBy,
-    );
-
+    setState(() => _isLoading = true);
+    final blocks = await _api.getModelBlocks(primaryTag: _currentTag);
     if (mounted) {
       setState(() {
-        _models = models;
+        _blocks = blocks;
         _isLoading = false;
-        _offset = _limit;
       });
     }
   }
 
   Future<void> _silentRefresh() async {
-    if (_isRefreshing || _searchController.text.isNotEmpty) return;
+    if (_isRefreshing || _isSearching) return;
     _isRefreshing = true;
-    final models = await _api.getModels(
-      limit: _limit,
-      offset: 0,
-      primaryTag: _currentTag,
-      sortBy: _sortBy,
-    );
-    if (mounted && models.isNotEmpty) {
-      setState(() {
-        _models = models;
-        _offset = _limit;
-      });
+    final blocks = await _api.getModelBlocks(primaryTag: _currentTag);
+    if (mounted && blocks.isNotEmpty) {
+      setState(() => _blocks = blocks);
     }
     _isRefreshing = false;
   }
 
-  Future<void> _loadMore() async {
-    if (_isLoadingMore || _searchController.text.isNotEmpty) return;
-    setState(() => _isLoadingMore = true);
-
-    final models = await _api.getModels(
-      limit: _limit,
-      offset: _offset,
-      primaryTag: _currentTag,
-      sortBy: _sortBy,
-    );
-
-    if (mounted) {
-      setState(() {
-        // 去重
-        final existingIds = _models.map((m) => m.id).toSet();
-        _models.addAll(models.where((m) => !existingIds.contains(m.id)));
-        _offset += _limit;
-        _isLoadingMore = false;
-      });
-    }
-  }
-
   Future<void> _search(String query) async {
     if (query.isEmpty) {
-      _loadModels();
+      setState(() {
+        _isSearching = false;
+        _searchResults = [];
+      });
       return;
     }
-    setState(() => _isLoading = true);
-    final models = await _api.searchModels(query);
+    setState(() {
+      _isSearching = true;
+      _isLoading = true;
+    });
+    final results = await _api.searchModels(query);
     if (mounted) {
       setState(() {
-        _models = models;
+        _searchResults = results;
         _isLoading = false;
       });
     }
   }
 
-  void _navigateToLiveRoom(ModelData model) {
+  List<ModelData> _allModelsInOrder() {
+    final seen = <int>{};
+    final out = <ModelData>[];
+    for (final block in _blocks) {
+      for (final m in block.models) {
+        if (seen.add(m.id)) out.add(m);
+      }
+    }
+    return out;
+  }
+
+  void _openLiveRoom(ModelData model, List<ModelData> playlist) {
+    final idx = playlist.indexWhere((m) => m.id == model.id);
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => LiveRoomPage(model: model),
+        builder: (context) => LiveRoomPage(
+          model: model,
+          playlist: playlist,
+          startIndex: idx < 0 ? 0 : idx,
+        ),
       ),
     );
   }
@@ -229,148 +210,134 @@ class _ModelListTabState extends State<_ModelListTab>
     return SafeArea(
       child: Column(
         children: [
-          // Search bar + status indicator
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      hintText: '搜索主播...',
-                      hintStyle:
-                          TextStyle(color: Colors.white.withValues(alpha: 0.5)),
-                      prefixIcon: const Icon(Icons.search,
-                          color: Color(0xFFFF4081)),
-                      suffixIcon: _searchController.text.isNotEmpty
-                          ? IconButton(
-                              icon:
-                                  const Icon(Icons.clear, color: Colors.grey),
-                              onPressed: () {
-                                _searchController.clear();
-                                _loadModels();
-                              },
-                            )
-                          : null,
-                      filled: true,
-                      fillColor: const Color(0xFF1E1E2E),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding:
-                          const EdgeInsets.symmetric(vertical: 0),
-                    ),
-                    onSubmitted: _search,
-                  ),
-                ),
-                Consumer<WebDataFetcher>(
-                  builder: (context, fetcher, _) {
-                    return Padding(
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: fetcher.isReady
-                              ? Colors.greenAccent
-                              : Colors.orangeAccent,
-                          boxShadow: [
-                            BoxShadow(
-                              color: (fetcher.isReady
-                                      ? Colors.greenAccent
-                                      : Colors.orangeAccent)
-                                  .withValues(alpha: 0.6),
-                              blurRadius: 6,
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-          // Tags
-          SizedBox(
-            height: 40,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              itemCount: _tags.length,
-              itemBuilder: (context, index) {
-                final tag = _tags[index];
-                final isSelected = _selectedTagIndex == index;
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: ChoiceChip(
-                    label: Text(tag['label']!),
-                    selected: isSelected,
-                    selectedColor: const Color(0xFFFF4081),
-                    backgroundColor: const Color(0xFF1E1E2E),
-                    labelStyle: TextStyle(
-                      color: isSelected ? Colors.white : Colors.white70,
-                      fontSize: 13,
-                    ),
-                    onSelected: (selected) {
-                      setState(() {
-                        _selectedTagIndex = index;
-                        _currentTag = tag['value']!;
-                        _sortBy = tag['sort']!;
-                      });
-                      _loadModels();
-                    },
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 8),
-          // Model grid
+          _buildSearchBar(),
+          _buildPrimaryTabBar(),
+          const SizedBox(height: 4),
           Expanded(
             child: _isLoading
-                ? _buildSkeletonGrid()
-                : _models.isEmpty
-                    ? _buildEmptyView()
-                    : RefreshIndicator(
-                        onRefresh: _loadModels,
-                        color: const Color(0xFFFF4081),
-                        backgroundColor: const Color(0xFF1E1E2E),
-                        child: GridView.builder(
-                          controller: _scrollController,
-                          padding: const EdgeInsets.all(8),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            childAspectRatio: 0.72,
-                            crossAxisSpacing: 8,
-                            mainAxisSpacing: 8,
-                          ),
-                          itemCount:
-                              _models.length + (_isLoadingMore ? 2 : 0),
-                          itemBuilder: (context, index) {
-                            if (index >= _models.length) {
-                              return _buildSkeletonCard();
-                            }
-                            return ModelCard(
-                              model: _models[index],
-                              onTap: () =>
-                                  _navigateToLiveRoom(_models[index]),
-                            );
-                          },
-                        ),
-                      ),
+                ? const Center(
+                    child: CircularProgressIndicator(color: Color(0xFFFF4081)),
+                  )
+                : _isSearching
+                    ? _buildSearchResultsGrid()
+                    : _buildBlocksList(),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildSkeletonGrid() {
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _searchController,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: '搜索主播...',
+                hintStyle:
+                    TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+                prefixIcon:
+                    const Icon(Icons.search, color: Color(0xFFFF4081)),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, color: Colors.grey),
+                        onPressed: () {
+                          _searchController.clear();
+                          _search('');
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: const Color(0xFF1E1E2E),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(vertical: 0),
+              ),
+              onSubmitted: _search,
+            ),
+          ),
+          Consumer<WebDataFetcher>(
+            builder: (context, fetcher, _) {
+              return Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: fetcher.isReady
+                        ? Colors.greenAccent
+                        : Colors.orangeAccent,
+                    boxShadow: [
+                      BoxShadow(
+                        color: (fetcher.isReady
+                                ? Colors.greenAccent
+                                : Colors.orangeAccent)
+                            .withValues(alpha: 0.6),
+                        blurRadius: 6,
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPrimaryTabBar() {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+      ),
+      child: TabBar(
+        controller: _tabController,
+        isScrollable: false,
+        indicatorColor: const Color(0xFFFF4081),
+        indicatorWeight: 3,
+        labelColor: Colors.white,
+        unselectedLabelColor: Colors.white60,
+        labelStyle:
+            const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        unselectedLabelStyle: const TextStyle(fontSize: 15),
+        tabs: _primaryTags.map((t) => Tab(text: t.label)).toList(),
+      ),
+    );
+  }
+
+  Widget _buildBlocksList() {
+    if (_blocks.isEmpty) return _buildEmptyView();
+    final allModels = _allModelsInOrder();
+    return RefreshIndicator(
+      onRefresh: _loadBlocks,
+      color: const Color(0xFFFF4081),
+      backgroundColor: const Color(0xFF1E1E2E),
+      child: ListView.builder(
+        padding: const EdgeInsets.only(top: 8, bottom: 16),
+        itemCount: _blocks.length,
+        itemBuilder: (context, index) {
+          final block = _blocks[index];
+          return _BlockSection(
+            block: block,
+            onTapModel: (m) => _openLiveRoom(m, allModels),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSearchResultsGrid() {
+    if (_searchResults.isEmpty) return _buildEmptyView();
     return GridView.builder(
       padding: const EdgeInsets.all(8),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -379,27 +346,13 @@ class _ModelListTabState extends State<_ModelListTab>
         crossAxisSpacing: 8,
         mainAxisSpacing: 8,
       ),
-      itemCount: 8,
-      itemBuilder: (context, index) => _buildSkeletonCard(),
-    );
-  }
-
-  Widget _buildSkeletonCard() {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: const Center(
-        child: SizedBox(
-          width: 20,
-          height: 20,
-          child: CircularProgressIndicator(
-            color: Color(0xFFFF4081),
-            strokeWidth: 2,
-          ),
-        ),
-      ),
+      itemCount: _searchResults.length,
+      itemBuilder: (context, index) {
+        return ModelCard(
+          model: _searchResults[index],
+          onTap: () => _openLiveRoom(_searchResults[index], _searchResults),
+        );
+      },
     );
   }
 
@@ -408,26 +361,91 @@ class _ModelListTabState extends State<_ModelListTab>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.live_tv_outlined,
-            size: 64,
-            color: Colors.white.withValues(alpha: 0.3),
-          ),
+          Icon(Icons.live_tv_outlined,
+              size: 64, color: Colors.white.withValues(alpha: 0.3)),
           const SizedBox(height: 16),
-          Text(
-            '暂无直播',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.5),
-              fontSize: 16,
-            ),
-          ),
+          Text('暂无直播',
+              style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.5), fontSize: 16)),
           const SizedBox(height: 16),
           ElevatedButton(
-            onPressed: _loadModels,
+            onPressed: _loadBlocks,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFF4081),
-            ),
+                backgroundColor: const Color(0xFFFF4081)),
             child: const Text('刷新'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BlockSection extends StatelessWidget {
+  final ModelBlock block;
+  final void Function(ModelData) onTapModel;
+
+  const _BlockSection({required this.block, required this.onTapModel});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Row(
+              children: [
+                Container(
+                  width: 4,
+                  height: 18,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF4081),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    block.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Text(
+                  '${block.models.length} 位',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.5),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: 220,
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: block.models.length,
+              itemBuilder: (context, idx) {
+                final model = block.models[idx];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: SizedBox(
+                    width: 160,
+                    child: ModelCard(
+                      model: model,
+                      onTap: () => onTapModel(model),
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
         ],
       ),
@@ -474,9 +492,7 @@ class _ProfileTabState extends State<_ProfileTab> {
   Future<void> _openWebLogin() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (context) => const WebLoginPage(),
-      ),
+      MaterialPageRoute(builder: (context) => const WebLoginPage()),
     );
     await Future.delayed(const Duration(milliseconds: 500));
     if (mounted) _checkLoginStatus();
@@ -487,8 +503,7 @@ class _ProfileTabState extends State<_ProfileTab> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2E),
-        title: const Text('退出登录',
-            style: TextStyle(color: Colors.white)),
+        title: const Text('退出登录', style: TextStyle(color: Colors.white)),
         content: const Text('确定要退出登录吗？',
             style: TextStyle(color: Colors.white70)),
         actions: [
@@ -498,8 +513,7 @@ class _ProfileTabState extends State<_ProfileTab> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style:
-                TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
             child: const Text('退出'),
           ),
         ],

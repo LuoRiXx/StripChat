@@ -184,6 +184,68 @@ class ApiService {
     return await _getModelsFromAsset();
   }
 
+  Future<List<ModelBlock>> getModelBlocks({
+    String primaryTag = 'girls',
+    int limit = 24,
+  }) async {
+    final uniq = _generateUniq();
+    final url = '$apiBase/v2/models?primaryTag=$primaryTag&limit=$limit'
+        '&topLimit=61&favoritesLimit=24&removeShows=true'
+        '&msBlock=true&byw=false&flags=0&srwm=false'
+        '&rcmGrp=A&rbCnGr=true&iem=true&decMb=true'
+        '&ctryTop=true&mlfv=false&rectf=false&nic=true&uniq=$uniq';
+
+    // 1) WebView 优先
+    try {
+      final raw = await WebDataFetcher().fetchJson(url);
+      if (raw != null && raw.isNotEmpty && !raw.trimLeft().startsWith('<')) {
+        final data = jsonDecode(raw);
+        final blocks = _parseBlocks(data);
+        if (blocks.isNotEmpty) return blocks;
+      }
+    } catch (_) {}
+
+    // 2) 直接 HTTP
+    try {
+      final response = await http
+          .get(Uri.parse(url), headers: _headers)
+          .timeout(const Duration(seconds: 8));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final blocks = _parseBlocks(data);
+        if (blocks.isNotEmpty) return blocks;
+      }
+    } catch (_) {}
+
+    // 3) 兜底：用普通 getModels 包装成一个 block
+    final fallback = await getModels(
+      limit: 60,
+      primaryTag: primaryTag,
+      sortBy: 'recommendedScore',
+    );
+    if (fallback.isEmpty) return [];
+    return [
+      ModelBlock(
+        id: 'fallback',
+        title: '推荐主播',
+        models: fallback,
+      ),
+    ];
+  }
+
+  List<ModelBlock> _parseBlocks(dynamic data) {
+    if (data is! Map<String, dynamic>) return [];
+    final List<dynamic> raw = data['blocks'] ?? [];
+    final blocks = <ModelBlock>[];
+    for (final b in raw) {
+      if (b is Map<String, dynamic>) {
+        final block = ModelBlock.fromJson(b);
+        if (block.models.isNotEmpty) blocks.add(block);
+      }
+    }
+    return blocks;
+  }
+
   Future<List<ModelData>> _fetchModelsViaWebView(String url) async {
     try {
       final raw = await WebDataFetcher().fetchJson(url);

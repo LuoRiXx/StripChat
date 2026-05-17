@@ -33,7 +33,7 @@ class FavoritesPage extends StatelessWidget {
                       '${fav.count} 个主播',
                       style: TextStyle(
                         fontSize: 14,
-                        color: Colors.white.withOpacity(0.6),
+                        color: Colors.white.withValues(alpha: 0.6),
                       ),
                     );
                   },
@@ -52,13 +52,13 @@ class FavoritesPage extends StatelessWidget {
                         Icon(
                           Icons.favorite_border,
                           size: 64,
-                          color: Colors.white.withOpacity(0.3),
+                          color: Colors.white.withValues(alpha: 0.3),
                         ),
                         const SizedBox(height: 16),
                         Text(
                           '还没有收藏任何主播',
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.5),
+                            color: Colors.white.withValues(alpha: 0.5),
                             fontSize: 16,
                           ),
                         ),
@@ -66,7 +66,7 @@ class FavoritesPage extends StatelessWidget {
                         Text(
                           '在直播间点击❤️即可收藏',
                           style: TextStyle(
-                            color: Colors.white.withOpacity(0.4),
+                            color: Colors.white.withValues(alpha: 0.4),
                             fontSize: 14,
                           ),
                         ),
@@ -108,8 +108,11 @@ class FavoritesPage extends StatelessWidget {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) =>
-                                  LiveRoomPage(model: model),
+                              builder: (context) => LiveRoomPage(
+                                model: model,
+                                playlist: fav.favorites,
+                                startIndex: index,
+                              ),
                             ),
                           );
                         },

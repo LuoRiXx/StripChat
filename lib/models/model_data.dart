@@ -122,6 +122,103 @@ class ModelData {
   }
 }
 
+class ModelBlock {
+  final String id;
+  final String title;
+  final String type;
+  final List<ModelData> models;
+
+  ModelBlock({
+    required this.id,
+    required this.title,
+    this.type = '',
+    required this.models,
+  });
+
+  factory ModelBlock.fromJson(Map<String, dynamic> json) {
+    final List<dynamic> rawModels = json['models'] ?? json['items'] ?? [];
+    final models = rawModels
+        .whereType<Map<String, dynamic>>()
+        .map(ModelData.fromJson)
+        .where((m) => m.status == 'public' || m.isLive)
+        .toList();
+
+    final rawId = (json['id'] ??
+            json['blockId'] ??
+            json['type'] ??
+            json['name'] ??
+            '')
+        .toString();
+
+    return ModelBlock(
+      id: rawId,
+      title: _resolveTitle(json),
+      type: (json['type'] ?? '').toString(),
+      models: models,
+    );
+  }
+
+  static String _resolveTitle(Map<String, dynamic> json) {
+    final candidates = [
+      json['localizedTitle'],
+      json['title'],
+      json['name'],
+      json['displayName'],
+      json['blockTitle'],
+      json['type'],
+      json['id'],
+    ];
+    for (final c in candidates) {
+      if (c != null && c.toString().isNotEmpty) {
+        return _localizeBlockTitle(c.toString());
+      }
+    }
+    return '推荐主播';
+  }
+
+  static String _localizeBlockTitle(String raw) {
+    final key = raw.toLowerCase().replaceAll('_', '').replaceAll('-', '');
+    const mapping = <String, String>{
+      'recommended': '今日为您推荐',
+      'recommendedforyou': '今日为您推荐',
+      'topmodels': '热门主播',
+      'topmodelsblock': '热门主播',
+      'top': '热门推送',
+      'matched': '匹配您的最新精选',
+      'matchedforyou': '匹配您的最新精选',
+      'matchedmodels': '匹配您的最新精选',
+      'recentlywatched': '最近观看',
+      'favorites': '我的最爱',
+      'newmodels': '推荐的新美女主播',
+      'newgirls': '推荐的新美女主播',
+      'new': '新主播',
+      'chinese': '中文性爱直播',
+      'china': '中文性爱直播',
+      'asian': '亚洲主播',
+      'free': '超赞免费性爱直播',
+      'mobile': '移动端性爱直播',
+      'lovense': 'Lovense 互动',
+      'hd': '高清直播',
+      '4k': '4K 高清直播',
+      'private': '私人秀',
+      'private show': '私人秀',
+      'vr': 'VR 摄像头',
+      'bdsm': '虐恋',
+      'fetish': '虐恋',
+      'ticketshow': '购票表演',
+      'ticketshows': '购票表演',
+      'couples': '情侣主播',
+      'guys': '男主播',
+      'trans': '变性主播',
+      'girls': '女主播',
+      'recommendedmodels': '今日为您推荐',
+      'similar': '相似主播',
+      'forfans': '粉丝专属',
+    };
+    return mapping[key] ?? raw;
+  }
+}
+
 class ChatMessage {
   final String username;
   final String message;
