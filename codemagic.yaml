@@ -1,61 +1,37 @@
 workflows:
-  ios-workflow:
-    name: iOS Build
+  ios-release:
+    name: Build iOS
     max_build_duration: 60
-    instance_type: mac_mini_m2
+    instance_type: mac_mini_m1
     environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.stripchat.stripChatApp
       flutter: stable
       xcode: latest
       cocoapods: default
     scripts:
-      - name: Set up code signing settings on Xcode project
+      - name: Clean build
         script: |
-          xcode-project use-profiles
-      - name: Get Flutter packages
+          flutter clean
+          rm -rf ios/Pods ios/Podfile.lock
+
+      - name: Install dependencies
         script: |
-          flutter packages pub get
-      - name: Flutter analyze
+          flutter pub get
+
+      - name: Install CocoaPods
         script: |
-          flutter analyze --no-fatal-infos
+          cd ios
+          pod install
+
       - name: Build iOS
         script: |
-          flutter build ipa --release \
-            --build-name=1.0.0 \
-            --build-number=$(($(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID") + 1)) \
-            --export-options-plist=/Users/builder/export_options.plist
-    artifacts:
-      - build/ios/ipa/*.ipa
-      - /tmp/xcodebuild_logs/*.log
-      - flutter_drive.log
-    publishing:
-      email:
-        recipients:
-          - jijiang778@gmail.com
-        notify:
-          success: true
-          failure: true
-      app_store_connect:
-        auth: integration
-        submit_to_testflight: true
+          flutter build ios --release --no-codesign
 
-  ios-debug-workflow:
-    name: iOS Debug Build
-    max_build_duration: 60
-    instance_type: mac_mini_m2
-    environment:
-      flutter: stable
-      xcode: latest
-      cocoapods: default
-    scripts:
-      - name: Get Flutter packages
+      - name: Create IPA
         script: |
-          flutter packages pub get
-      - name: Build iOS Debug
-        script: |
-          flutter build ios --debug --no-codesign
+          mkdir -p Payload
+          cp -r build/ios/iphoneos/Runner.app Payload/
+          zip -r StripChat-iOS.ipa Payload
+          rm -rf Payload
+
     artifacts:
-      - build/ios/iphoneos/*.app
-      - /tmp/xcodebuild_logs/*.log
+      - StripChat-iOS.ipa
