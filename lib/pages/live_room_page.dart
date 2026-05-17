@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:video_player/video_player.dart';
-import 'package:chewie/chewie.dart';
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 import '../models/model_data.dart';
-import '../services/api_service.dart';
 import '../services/favorites_service.dart';
-import '../widgets/chat_widget.dart';
 
 class LiveRoomPage extends StatefulWidget {
   final ModelData model;
@@ -18,24 +16,89 @@ class LiveRoomPage extends StatefulWidget {
 }
 
 class _LiveRoomPageState extends State<LiveRoomPage> {
-  VideoPlayerController? _videoController;
-  ChewieController? _chewieController;
+  late final WebViewController _controller;
   bool _isLoading = true;
-  bool _hasError = false;
   bool _isFullscreen = false;
-  String _errorMessage = '';
+  double _progress = 0;
+
+  static const String _hideUiJs = '''
+    (function() {
+      const style = document.createElement('style');
+      style.innerHTML = `
+        header, .header-container, .top-navigation,
+        .footer, .footer-container, .promo-banner,
+        .cookie-notice, .age-verification-modal,
+        [data-test="header"], [data-test="footer"],
+        .left-side-menu, .right-side-menu,
+        .ad-banner, .advertisement,
+        .install-app-banner, .download-app-banner {
+          display: none !important;
+        }
+        body, html { background: #000 !important; margin: 0 !important; padding: 0 !important; }
+        .video-player, .player-container, .stream-container {
+          width: 100% !important;
+          height: 100% !important;
+        }
+      `;
+      document.head.appendChild(style);
+    })();
+  ''';
 
   @override
   void initState() {
     super.initState();
-    _initPlayer();
+    _initWebView();
+  }
+
+  void _initWebView() {
+    late final PlatformWebViewControllerCreationParams params;
+    params = WebKitWebViewControllerCreationParams(
+      allowsInlineMediaPlayback: true,
+      mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
+    );
+
+    _controller = WebViewController.fromPlatformCreationParams(params)
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.black)
+      ..setUserAgent(
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
+        'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 '
+        'Mobile/15E148 Safari/604.1',
+      )
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onProgress: (progress) {
+            if (mounted) setState(() => _progress = progress / 100);
+          },
+          onPageStarted: (url) {
+            if (mounted) setState(() => _isLoading = true);
+          },
+          onPageFinished: (url) async {
+            await _controller.runJavaScript(_hideUiJs);
+            if (mounted) setState(() => _isLoading = false);
+          },
+          onNavigationRequest: (request) {
+            final url = request.url;
+            if (url.contains('login') ||
+                url.contains('signup') ||
+                url.contains('billing') ||
+                url.contains('account')) {
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
+        ),
+      )
+      ..loadRequest(
+        Uri.parse('https://zh.stripchat.com/${widget.model.username}'),
+        headers: const {
+          'Referer': 'https://zh.stripchat.com/',
+        },
+      );
   }
 
   @override
   void dispose() {
-    _chewieController?.dispose();
-    _videoController?.dispose();
-    // Restore portrait orientation when leaving
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
       DeviceOrientation.portraitDown,
@@ -44,125 +107,8 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
     super.dispose();
   }
 
-  Future<void> _initPlayer() async {
-    setState(() {
-      _isLoading = true;
-      _hasError = false;
-    });
-
-    final api = ApiService();
-    final liveUrl = await api.getLiveHlsUrl(
-      widget.model.username,
-      fallbackStreamName: widget.model.streamName.isNotEmpty
-          ? widget.model.streamName
-          : '${widget.model.id}',
-    );
-    final hlsUrl = liveUrl ?? widget.model.hlsUrl;
-
-    if (hlsUrl.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _hasError = true;
-          _errorMessage = '主播未开播或获取直播流失败';
-        });
-      }
-      return;
-    }
-
-    try {
-      _videoController = VideoPlayerController.networkUrl(
-        Uri.parse(hlsUrl),
-        httpHeaders: {
-          'User-Agent':
-              'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15',
-          'Referer': 'https://zh.stripchat.com/',
-          'Origin': 'https://zh.stripchat.com',
-        },
-        videoPlayerOptions: VideoPlayerOptions(
-          mixWithOthers: false,
-          allowBackgroundPlayback: false,
-        ),
-      );
-
-      await _videoController!.initialize();
-
-      _chewieController = ChewieController(
-        videoPlayerController: _videoController!,
-        autoPlay: true,
-        looping: false,
-        isLive: true,
-        showControls: true,
-        showOptions: false,
-        allowFullScreen: true,
-        allowPlaybackSpeedChanging: false,
-        placeholder: Container(
-          color: Colors.black,
-          child: const Center(
-            child: CircularProgressIndicator(color: Color(0xFFFF4081)),
-          ),
-        ),
-        errorBuilder: (context, errorMessage) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, color: Colors.white54, size: 42),
-                const SizedBox(height: 8),
-                Text(
-                  '视频加载失败',
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton(
-                  onPressed: _retryPlayer,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF4081),
-                  ),
-                  child: const Text('重试'),
-                ),
-              ],
-            ),
-          );
-        },
-        fullScreenByDefault: false,
-        routePageBuilder: (context, animation, secondaryAnimation, controllerProvider) {
-          return _buildFullscreenPlayer(controllerProvider);
-        },
-      );
-
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _hasError = true;
-          _errorMessage = '主播可能已下播';
-        });
-      }
-    }
-  }
-
-  Widget _buildFullscreenPlayer(Widget controllerProvider) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Center(child: controllerProvider),
-    );
-  }
-
-  void _retryPlayer() {
-    _chewieController?.dispose();
-    _videoController?.dispose();
-    _initPlayer();
-  }
-
   void _toggleFullscreen() {
-    setState(() {
-      _isFullscreen = !_isFullscreen;
-    });
-
+    setState(() => _isFullscreen = !_isFullscreen);
     if (_isFullscreen) {
       SystemChrome.setPreferredOrientations([
         DeviceOrientation.landscapeLeft,
@@ -178,30 +124,28 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
     }
   }
 
+  void _reload() {
+    _controller.reload();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isFullscreen) {
       return Scaffold(
         backgroundColor: Colors.black,
-        body: GestureDetector(
-          onTap: () {},
-          onDoubleTap: _toggleFullscreen,
-          child: Stack(
-            children: [
-              Center(
-                child: _buildVideoPlayer(),
+        body: Stack(
+          children: [
+            Positioned.fill(child: WebViewWidget(controller: _controller)),
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 8,
+              right: 16,
+              child: IconButton(
+                onPressed: _toggleFullscreen,
+                icon: const Icon(Icons.fullscreen_exit,
+                    color: Colors.white, size: 30),
               ),
-              Positioned(
-                top: MediaQuery.of(context).padding.top + 8,
-                right: 16,
-                child: IconButton(
-                  onPressed: _toggleFullscreen,
-                  icon: const Icon(Icons.fullscreen_exit,
-                      color: Colors.white, size: 30),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
@@ -261,9 +205,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
             builder: (context, fav, _) {
               final isFav = fav.isFavorite(widget.model.id);
               return IconButton(
-                onPressed: () {
-                  fav.toggleFavorite(widget.model);
-                },
+                onPressed: () => fav.toggleFavorite(widget.model),
                 icon: Icon(
                   isFav ? Icons.favorite : Icons.favorite_border,
                   color: isFav ? const Color(0xFFFF4081) : Colors.white,
@@ -272,142 +214,44 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
             },
           ),
           IconButton(
+            onPressed: _reload,
+            icon: const Icon(Icons.refresh, color: Colors.white),
+          ),
+          IconButton(
             onPressed: _toggleFullscreen,
             icon: const Icon(Icons.fullscreen, color: Colors.white),
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          // Video player area
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: Container(
-              color: Colors.black,
-              child: _buildVideoPlayer(),
-            ),
-          ),
-          // Info bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1A1A2E),
-              border: Border(
-                bottom: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
-              ),
-            ),
-            child: Row(
-              children: [
-                if (widget.model.age > 0) ...[
-                  _buildInfoChip(Icons.cake, '${widget.model.age}岁'),
-                  const SizedBox(width: 12),
-                ],
-                if (widget.model.country.isNotEmpty) ...[
-                  _buildInfoChip(Icons.location_on, widget.model.country),
-                  const SizedBox(width: 12),
-                ],
-                if (widget.model.isHd)
-                  _buildInfoChip(Icons.hd, 'HD'),
-                const Spacer(),
-                Consumer<FavoritesService>(
-                  builder: (context, fav, _) {
-                    final isFav = fav.isFavorite(widget.model.id);
-                    return TextButton.icon(
-                      onPressed: () => fav.toggleFavorite(widget.model),
-                      icon: Icon(
-                        isFav ? Icons.favorite : Icons.favorite_border,
-                        size: 18,
-                        color: isFav
-                            ? const Color(0xFFFF4081)
-                            : Colors.white70,
+          Positioned.fill(child: WebViewWidget(controller: _controller)),
+          if (_isLoading)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const CircularProgressIndicator(
+                        color: Color(0xFFFF4081),
                       ),
-                      label: Text(
-                        isFav ? '已收藏' : '收藏',
-                        style: TextStyle(
-                          color: isFav
-                              ? const Color(0xFFFF4081)
-                              : Colors.white70,
-                          fontSize: 13,
+                      const SizedBox(height: 16),
+                      Text(
+                        '加载直播中... ${(_progress * 100).toInt()}%',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 14,
                         ),
                       ),
-                    );
-                  },
+                    ],
+                  ),
                 ),
-              ],
-            ),
-          ),
-          // Chat area
-          Expanded(
-            child: ChatWidget(model: widget.model),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildVideoPlayer() {
-    if (_isLoading) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(color: Color(0xFFFF4081)),
-            SizedBox(height: 12),
-            Text(
-              '正在加载直播...',
-              style: TextStyle(color: Colors.white70, fontSize: 14),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (_hasError) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white54, size: 48),
-            const SizedBox(height: 12),
-            Text(
-              _errorMessage,
-              style: const TextStyle(color: Colors.white70),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: _retryPlayer,
-              icon: const Icon(Icons.refresh),
-              label: const Text('重试'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFFF4081),
               ),
             ),
-          ],
-        ),
-      );
-    }
-
-    if (_chewieController != null) {
-      return Chewie(controller: _chewieController!);
-    }
-
-    return const SizedBox.shrink();
-  }
-
-  Widget _buildInfoChip(IconData icon, String label) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: Colors.white.withValues(alpha: 0.6)),
-        const SizedBox(width: 4),
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.white.withValues(alpha: 0.7),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
