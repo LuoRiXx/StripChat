@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 import '../models/model_data.dart';
 
 class ApiService {
   static const String baseUrl = 'https://zh.stripchat.com';
   static const String apiBase = '$baseUrl/api/front';
+  static const String imageBase = 'https://static-proxy.strpst.com';
 
   String? _jwtToken;
   String? _csrfToken;
@@ -14,6 +16,12 @@ class ApiService {
   static final ApiService _instance = ApiService._internal();
   factory ApiService() => _instance;
   ApiService._internal();
+
+  String _generateUniq() {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    final rng = Random();
+    return List.generate(16, (_) => chars[rng.nextInt(chars.length)]).join();
+  }
 
   Map<String, String> get _headers => {
         'Accept': 'application/json',
@@ -36,6 +44,7 @@ class ApiService {
     cookies.add('localeDomain=zh');
     cookies.add('alreadyVisited=1');
     cookies.add('isVisitorsAgreementAccepted=1');
+    cookies.add('isRecommendationDisabled=false');
     return cookies.join('; ');
   }
 
@@ -54,6 +63,12 @@ class ApiService {
   bool get isAuthenticated => _jwtToken != null && _jwtToken!.isNotEmpty;
   int? get userId => _userId;
   String? get jwtToken => _jwtToken;
+
+  String fixImageUrl(String url) {
+    if (url.isEmpty) return '';
+    if (url.startsWith('http')) return url;
+    return '$imageBase$url';
+  }
 
   Future<Map<String, dynamic>?> login(
       String username, String password) async {
@@ -88,7 +103,6 @@ class ApiService {
         return data;
       }
 
-      // Try fetching initial dynamic config instead
       return await _fetchInitialConfig(username);
     } catch (e) {
       return await _fetchInitialConfig(username);
@@ -120,24 +134,65 @@ class ApiService {
   }
 
   Future<List<ModelData>> getModels({
-    int limit = 50,
+    int limit = 60,
     int offset = 0,
-    String sortBy = 'stripScore',
+    String sortBy = 'recommendedScore',
     String primaryTag = 'girls',
   }) async {
     try {
+      final uniq = _generateUniq();
       final uri = Uri.parse(
-          '$apiBase/v3/models?limit=$limit&offset=$offset&primaryTag=$primaryTag&sortBy=$sortBy&parentTag=$primaryTag');
+          '$apiBase/models?limit=$limit&offset=$offset&primaryTag=$primaryTag'
+          '&filterGroupTags=%5B%5B%22recommended%22%5D%5D'
+          '&sortBy=$sortBy&userRole=user&nic=true&rcmGrp=A'
+          '&rbCnGr=true&iem=true&decMb=true&ctryTop=true'
+          '&mlfv=false&rectf=false&uniq=$uniq');
       final response = await http.get(uri, headers: _headers);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final List<dynamic> models =
-            data['models'] ?? data['filteredModels'] ?? [];
+        final List<dynamic> models = data['models'] ?? [];
         return models
             .map((m) => ModelData.fromJson(m as Map<String, dynamic>))
             .where((m) => m.status == 'public' || m.isLive)
             .toList();
+      }
+
+      return await _getModelsV2(limit: limit, primaryTag: primaryTag);
+    } catch (e) {
+      return await _getModelsV2(limit: limit, primaryTag: primaryTag);
+    }
+  }
+
+  Future<List<ModelData>> _getModelsV2({
+    int limit = 24,
+    String primaryTag = 'girls',
+  }) async {
+    try {
+      final uniq = _generateUniq();
+      final uri = Uri.parse(
+          '$apiBase/v2/models?primaryTag=$primaryTag&limit=$limit'
+          '&topLimit=61&favoritesLimit=24&removeShows=true'
+          '&msBlock=true&byw=false&flags=0&srwm=false'
+          '&rcmGrp=A&rbCnGr=true&iem=true&decMb=true'
+          '&ctryTop=true&mlfv=false&rectf=false&nic=true&uniq=$uniq');
+      final response = await http.get(uri, headers: _headers);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List<ModelData> allModels = [];
+
+        if (data['blocks'] != null) {
+          for (final block in data['blocks']) {
+            final List<dynamic> models = block['models'] ?? [];
+            allModels.addAll(
+              models
+                  .map((m) => ModelData.fromJson(m as Map<String, dynamic>))
+                  .where((m) => m.status == 'public' || m.isLive),
+            );
+          }
+        }
+        return allModels;
       }
     } catch (e) {
       // Silently fail
@@ -147,14 +202,16 @@ class ApiService {
 
   Future<List<ModelData>> searchModels(String query) async {
     try {
+      final uniq = _generateUniq();
       final uri = Uri.parse(
-          '$apiBase/v3/models?limit=50&offset=0&q=$query&sortBy=stripScore');
+          '$apiBase/models?limit=50&offset=0&primaryTag=girls'
+          '&sortBy=recommendedScore&q=$query&userRole=user'
+          '&nic=true&uniq=$uniq');
       final response = await http.get(uri, headers: _headers);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final List<dynamic> models =
-            data['models'] ?? data['filteredModels'] ?? [];
+        final List<dynamic> models = data['models'] ?? [];
         return models
             .map((m) => ModelData.fromJson(m as Map<String, dynamic>))
             .toList();
@@ -165,15 +222,16 @@ class ApiService {
     return [];
   }
 
-  Future<ModelData?> getModelDetail(String username) async {
+  Future<Map<String, dynamic>?> getBroadcastInfo(String username) async {
     try {
-      final uri = Uri.parse('$apiBase/models/$username');
+      final uniq = _generateUniq();
+      final uri =
+          Uri.parse('$apiBase/v1/broadcasts/$username?uniq=$uniq');
       final response = await http.get(uri, headers: _headers);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final modelJson = data['model'] ?? data;
-        return ModelData.fromJson(modelJson as Map<String, dynamic>);
+        return data['item'] as Map<String, dynamic>?;
       }
     } catch (e) {
       // Silently fail
@@ -181,39 +239,38 @@ class ApiService {
     return null;
   }
 
-  String getHlsUrl(int modelId) {
-    return 'https://edge-hls.doppiocdn.com/hls/$modelId/master/${modelId}_auto.m3u8';
-  }
-
-  String getHlsHighUrl(int modelId) {
-    return 'https://edge-hls.doppiocdn.com/hls/$modelId/master/${modelId}.m3u8';
-  }
-
-  String getSnapshotUrl(int modelId) {
-    return 'https://img.strpst.com/thumbs/$modelId/${modelId}_webp';
-  }
-
-  String getWebSocketUrl() {
-    final auth = _sessionId ?? '';
-    return 'wss://comet.stripchat.com/comet2?auth=$auth&host=stripchat.com';
-  }
-
-  Future<List<ModelData>> getFavorites() async {
-    if (_userId == null) return [];
+  Future<List<Map<String, dynamic>>> getChatMessages(int modelId) async {
     try {
-      final uri = Uri.parse('$apiBase/favorites?userId=$_userId');
+      final uniq = _generateUniq();
+      final uri = Uri.parse(
+          '$apiBase/v2/models/$modelId/chat?source=regular&uniq=$uniq');
       final response = await http.get(uri, headers: _headers);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final List<dynamic> models = data['models'] ?? data['favorites'] ?? [];
-        return models
-            .map((m) => ModelData.fromJson(m as Map<String, dynamic>))
-            .toList();
+        final List<dynamic> messages = data['messages'] ?? [];
+        return messages.cast<Map<String, dynamic>>();
       }
     } catch (e) {
       // Silently fail
     }
     return [];
+  }
+
+  String getHlsUrl(int modelId, {String quality = 'auto'}) {
+    return 'https://edge-hls.doppiocdn.com/hls/$modelId/master/${modelId}_auto.m3u8';
+  }
+
+  String getHlsHighestUrl(int modelId, List<String> presets) {
+    if (presets.isEmpty) {
+      return getHlsUrl(modelId);
+    }
+    final best = presets.first;
+    return 'https://edge-hls.doppiocdn.com/hls/$modelId/master/${modelId}_$best.m3u8';
+  }
+
+  String getWebSocketUrl() {
+    final auth = _sessionId ?? '';
+    return 'wss://comet.stripchat.com/comet2?auth=$auth&host=stripchat.com';
   }
 }

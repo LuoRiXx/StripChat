@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/model_data.dart';
 import '../services/api_service.dart';
 
@@ -17,87 +15,64 @@ class ChatWidget extends StatefulWidget {
 class _ChatWidgetState extends State<ChatWidget> {
   final List<ChatMessage> _messages = [];
   final ScrollController _scrollController = ScrollController();
-  WebSocketChannel? _channel;
-  StreamSubscription? _subscription;
   final TextEditingController _messageController = TextEditingController();
+  Timer? _pollTimer;
   bool _isConnected = false;
 
   @override
   void initState() {
     super.initState();
-    _connectWebSocket();
+    _loadChatMessages();
+    _pollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _loadChatMessages();
+    });
   }
 
   @override
   void dispose() {
-    _subscription?.cancel();
-    _channel?.sink.close();
+    _pollTimer?.cancel();
     _scrollController.dispose();
     _messageController.dispose();
     super.dispose();
   }
 
-  void _connectWebSocket() {
-    try {
-      final wsUrl = ApiService().getWebSocketUrl();
-      _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
-      _isConnected = true;
+  Future<void> _loadChatMessages() async {
+    final api = ApiService();
+    final messages = await api.getChatMessages(widget.model.id);
 
-      // Subscribe to the model's room
-      _channel?.sink.add(jsonEncode({
-        'type': 'subscribe',
-        'channel': 'chat_${widget.model.id}',
-      }));
+    if (!mounted) return;
 
-      _subscription = _channel?.stream.listen(
-        (data) {
-          try {
-            final json = jsonDecode(data.toString());
-            if (json['type'] == 'message' || json['event'] == 'chatMessage') {
-              final msg = ChatMessage(
-                username: json['username'] ?? json['from'] ?? '匿名',
-                message: json['message'] ?? json['text'] ?? '',
-                timestamp: DateTime.now(),
-              );
-              if (mounted) {
-                setState(() {
-                  _messages.add(msg);
-                  if (_messages.length > 200) {
-                    _messages.removeRange(0, 50);
-                  }
-                });
-                _scrollToBottom();
-              }
-            }
-          } catch (_) {}
-        },
-        onError: (error) {
-          if (mounted) {
-            setState(() => _isConnected = false);
-          }
-        },
-        onDone: () {
-          if (mounted) {
-            setState(() => _isConnected = false);
-          }
-        },
-      );
-
-      // Add welcome message
+    if (messages.isNotEmpty) {
       setState(() {
+        _isConnected = true;
+        _messages.clear();
         _messages.add(ChatMessage(
           username: '系统',
           message: '欢迎来到 ${widget.model.username} 的直播间',
           timestamp: DateTime.now(),
           isSystem: true,
         ));
+        for (final msg in messages) {
+          final details = msg['details'] as Map<String, dynamic>? ?? {};
+          final userData = msg['userData'] as Map<String, dynamic>? ?? {};
+          final body = details['body'] ?? '';
+          final user = userData['username'] ?? '匿名';
+          if (body.toString().isNotEmpty) {
+            _messages.add(ChatMessage(
+              username: user.toString(),
+              message: body.toString(),
+              timestamp: DateTime.tryParse(msg['createdAt'] ?? '') ??
+                  DateTime.now(),
+            ));
+          }
+        }
       });
-    } catch (e) {
+      _scrollToBottom();
+    } else if (_messages.isEmpty) {
       setState(() {
-        _isConnected = false;
         _messages.add(ChatMessage(
           username: '系统',
-          message: '聊天连接中...',
+          message: '欢迎来到 ${widget.model.username} 的直播间',
           timestamp: DateTime.now(),
           isSystem: true,
         ));
@@ -121,14 +96,6 @@ class _ChatWidgetState extends State<ChatWidget> {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    if (_isConnected && _channel != null) {
-      _channel?.sink.add(jsonEncode({
-        'type': 'chatMessage',
-        'message': text,
-        'modelId': widget.model.id,
-      }));
-    }
-
     setState(() {
       _messages.add(ChatMessage(
         username: 'jijiang778',
@@ -144,17 +111,16 @@ class _ChatWidgetState extends State<ChatWidget> {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.6),
+        color: Colors.black.withValues(alpha: 0.6),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: Column(
         children: [
-          // Chat header
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               border: Border(
-                bottom: BorderSide(color: Colors.white.withOpacity(0.1)),
+                bottom: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
               ),
             ),
             child: Row(
@@ -182,14 +148,13 @@ class _ChatWidgetState extends State<ChatWidget> {
               ],
             ),
           ),
-          // Messages
           Expanded(
             child: _messages.isEmpty
                 ? Center(
                     child: Text(
                       '暂无消息',
                       style: TextStyle(
-                        color: Colors.white.withOpacity(0.4),
+                        color: Colors.white.withValues(alpha: 0.4),
                         fontSize: 13,
                       ),
                     ),
@@ -219,7 +184,7 @@ class _ChatWidgetState extends State<ChatWidget> {
                               TextSpan(
                                 text: msg.message,
                                 style: TextStyle(
-                                  color: Colors.white.withOpacity(0.9),
+                                  color: Colors.white.withValues(alpha: 0.9),
                                   fontSize: 13,
                                 ),
                               ),
@@ -230,12 +195,11 @@ class _ChatWidgetState extends State<ChatWidget> {
                     },
                   ),
           ),
-          // Input
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               border: Border(
-                top: BorderSide(color: Colors.white.withOpacity(0.1)),
+                top: BorderSide(color: Colors.white.withValues(alpha: 0.1)),
               ),
             ),
             child: Row(
@@ -247,9 +211,9 @@ class _ChatWidgetState extends State<ChatWidget> {
                     decoration: InputDecoration(
                       hintText: '发送消息...',
                       hintStyle:
-                          TextStyle(color: Colors.white.withOpacity(0.4)),
+                          TextStyle(color: Colors.white.withValues(alpha: 0.4)),
                       filled: true,
-                      fillColor: Colors.white.withOpacity(0.1),
+                      fillColor: Colors.white.withValues(alpha: 0.1),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(20),
                         borderSide: BorderSide.none,

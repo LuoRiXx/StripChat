@@ -88,7 +88,7 @@ class _ModelListTabState extends State<_ModelListTab> {
   int _offset = 0;
   final int _limit = 50;
   String _currentTag = 'girls';
-  String _sortBy = 'stripScore';
+  String _sortBy = 'recommendedScore';
   final ScrollController _scrollController = ScrollController();
   final TextEditingController _searchController = TextEditingController();
 
@@ -247,11 +247,11 @@ class _ModelListTabState extends State<_ModelListTab> {
                     onSelected: (selected) {
                       setState(() {
                         if (index == 4) {
-                          _sortBy = 'viewers';
+                          _sortBy = 'viewersCount';
                           _currentTag = 'girls';
                         } else {
                           _currentTag = tag['value']!;
-                          _sortBy = 'stripScore';
+                          _sortBy = 'recommendedScore';
                         }
                       });
                       _loadModels();

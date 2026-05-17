@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:chewie/chewie.dart';
 import '../models/model_data.dart';
-import '../services/api_service.dart';
 import '../services/favorites_service.dart';
 import '../widgets/chat_widget.dart';
 
@@ -50,8 +49,9 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
       _hasError = false;
     });
 
-    final api = ApiService();
-    final hlsUrl = api.getHlsUrl(widget.model.id);
+    final hlsUrl = widget.model.hlsBestUrl.isNotEmpty
+        ? widget.model.hlsBestUrl
+        : widget.model.hlsUrl;
 
     try {
       _videoController = VideoPlayerController.networkUrl(
@@ -88,7 +88,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
                 const SizedBox(height: 8),
                 Text(
                   '视频加载失败',
-                  style: TextStyle(color: Colors.white.withOpacity(0.7)),
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
                 ),
                 const SizedBox(height: 12),
                 ElevatedButton(
@@ -104,12 +104,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
         },
         fullScreenByDefault: false,
         routePageBuilder: (context, animation, secondaryAnimation, controllerProvider) {
-          return AnimatedBuilder(
-            animation: animation,
-            builder: (context, child) {
-              return _buildFullscreenPlayer(controllerProvider);
-            },
-          );
+          return _buildFullscreenPlayer(controllerProvider);
         },
       );
 
@@ -230,7 +225,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
                       '${widget.model.viewerCount} 观看',
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.white.withOpacity(0.6),
+                        color: Colors.white.withValues(alpha: 0.6),
                       ),
                     ),
                 ],
@@ -275,7 +270,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
             decoration: BoxDecoration(
               color: const Color(0xFF1A1A2E),
               border: Border(
-                bottom: BorderSide(color: Colors.white.withOpacity(0.05)),
+                bottom: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
               ),
             ),
             child: Row(
@@ -380,13 +375,13 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 14, color: Colors.white.withOpacity(0.6)),
+        Icon(icon, size: 14, color: Colors.white.withValues(alpha: 0.6)),
         const SizedBox(width: 4),
         Text(
           label,
           style: TextStyle(
             fontSize: 12,
-            color: Colors.white.withOpacity(0.7),
+            color: Colors.white.withValues(alpha: 0.7),
           ),
         ),
       ],

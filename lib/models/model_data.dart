@@ -1,73 +1,104 @@
 class ModelData {
   final int id;
   final String username;
-  final String previewUrl;
-  final String previewUrlThumbBig;
   final String previewUrlThumbSmall;
+  final String avatarUrl;
+  final String hlsPlaylist;
   final bool isLive;
   final bool isHd;
   final String status;
   final String broadcastGender;
   final int age;
   final String country;
-  final List<String> languages;
-  final String ethnicity;
-  final String bodyType;
-  final int stripScore;
-  final String snapshotUrl;
   final int viewerCount;
-  final String hlsUrl;
+  final bool isNew;
+  final bool isMobile;
+  final bool isLovense;
+  final String streamName;
+  final List<String> presets;
+  final int broadcastWidth;
+  final int broadcastHeight;
+
+  static const String _imageBase = 'https://static-proxy.strpst.com';
 
   ModelData({
     required this.id,
     required this.username,
-    this.previewUrl = '',
-    this.previewUrlThumbBig = '',
     this.previewUrlThumbSmall = '',
+    this.avatarUrl = '',
+    this.hlsPlaylist = '',
     this.isLive = false,
     this.isHd = false,
     this.status = 'off',
     this.broadcastGender = '',
     this.age = 0,
     this.country = '',
-    this.languages = const [],
-    this.ethnicity = '',
-    this.bodyType = '',
-    this.stripScore = 0,
-    this.snapshotUrl = '',
     this.viewerCount = 0,
-    this.hlsUrl = '',
+    this.isNew = false,
+    this.isMobile = false,
+    this.isLovense = false,
+    this.streamName = '',
+    this.presets = const [],
+    this.broadcastWidth = 0,
+    this.broadcastHeight = 0,
   });
+
+  String get snapshotUrl {
+    if (previewUrlThumbSmall.isEmpty) return '';
+    if (previewUrlThumbSmall.startsWith('http')) return previewUrlThumbSmall;
+    return '$_imageBase$previewUrlThumbSmall';
+  }
+
+  String get fullAvatarUrl {
+    if (avatarUrl.isEmpty) return '';
+    if (avatarUrl.startsWith('http')) return avatarUrl;
+    return '$_imageBase$avatarUrl';
+  }
+
+  String get hlsUrl {
+    if (hlsPlaylist.isNotEmpty) return hlsPlaylist;
+    if (id > 0) {
+      return 'https://edge-hls.doppiocdn.com/hls/$id/master/${id}_auto.m3u8';
+    }
+    return '';
+  }
+
+  String get hlsBestUrl {
+    if (presets.isNotEmpty) {
+      final best = presets.first;
+      return 'https://edge-hls.doppiocdn.com/hls/$id/master/${id}_$best.m3u8';
+    }
+    return hlsUrl;
+  }
 
   factory ModelData.fromJson(Map<String, dynamic> json) {
     final id = json['id'] ?? 0;
-    String snapshot = json['snapshotUrl'] ?? json['previewUrl'] ?? '';
-    if (snapshot.isEmpty) {
-      snapshot =
-          'https://img.strpst.com/thumbs/$id/${id}_webp';
-    }
+    final broadcastSettings =
+        json['broadcastSettings'] as Map<String, dynamic>? ?? {};
 
     return ModelData(
       id: id,
       username: json['username'] ?? json['name'] ?? '',
-      previewUrl: json['previewUrl'] ?? '',
-      previewUrlThumbBig: json['previewUrlThumbBig'] ?? '',
       previewUrlThumbSmall: json['previewUrlThumbSmall'] ?? '',
-      isLive: json['isLive'] ?? json['status'] == 'public',
+      avatarUrl: json['avatarUrl'] ?? '',
+      hlsPlaylist: json['hlsPlaylist'] ?? '',
+      isLive: json['isLive'] ?? (json['status'] == 'public'),
       isHd: json['isHd'] ?? false,
       status: json['status'] ?? 'off',
       broadcastGender: json['broadcastGender'] ?? '',
       age: json['age'] ?? 0,
       country: json['country'] ?? '',
-      languages: json['languages'] != null
-          ? List<String>.from(json['languages'])
-          : [],
-      ethnicity: json['ethnicity'] ?? '',
-      bodyType: json['bodyType'] ?? '',
-      stripScore: json['stripScore'] ?? 0,
-      snapshotUrl: snapshot,
       viewerCount: json['viewersCount'] ?? json['viewerCount'] ?? 0,
-      hlsUrl: json['hlsUrl'] ?? '',
+      isNew: json['isNew'] ?? false,
+      isMobile: json['isMobile'] ?? false,
+      isLovense: json['isLovense'] ?? false,
+      streamName: json['streamName'] ?? '$id',
+      presets: json['presets'] != null
+          ? List<String>.from(
+              (json['presets'] as List).where((p) => p != null))
+          : [],
+      broadcastWidth: broadcastSettings['width'] ?? 0,
+      broadcastHeight: broadcastSettings['height'] ?? 0,
     );
   }
 
@@ -75,22 +106,25 @@ class ModelData {
     return {
       'id': id,
       'username': username,
-      'previewUrl': previewUrl,
-      'previewUrlThumbBig': previewUrlThumbBig,
       'previewUrlThumbSmall': previewUrlThumbSmall,
+      'avatarUrl': avatarUrl,
+      'hlsPlaylist': hlsPlaylist,
       'isLive': isLive,
       'isHd': isHd,
       'status': status,
       'broadcastGender': broadcastGender,
       'age': age,
       'country': country,
-      'languages': languages,
-      'ethnicity': ethnicity,
-      'bodyType': bodyType,
-      'stripScore': stripScore,
-      'snapshotUrl': snapshotUrl,
-      'viewerCount': viewerCount,
-      'hlsUrl': hlsUrl,
+      'viewersCount': viewerCount,
+      'isNew': isNew,
+      'isMobile': isMobile,
+      'isLovense': isLovense,
+      'streamName': streamName,
+      'presets': presets,
+      'broadcastSettings': {
+        'width': broadcastWidth,
+        'height': broadcastHeight,
+      },
     };
   }
 }
