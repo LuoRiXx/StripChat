@@ -56,6 +56,7 @@ class ModelData {
   }
 
   String get hlsUrl {
+    if (hlsPlaylist.isNotEmpty) return hlsPlaylist;
     final sn = streamName.isNotEmpty ? streamName : '$id';
     if (sn.isEmpty || sn == '0') return '';
     return 'https://edge-hls.doppiocdn.com/hls/$sn/master/$sn.m3u8';
