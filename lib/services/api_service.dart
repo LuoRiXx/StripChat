@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import '../models/model_data.dart';
+import 'web_data_fetcher.dart';
 
 class ApiService {
   static const String baseUrl = 'https://zh.stripchat.com';
@@ -144,16 +145,22 @@ class ApiService {
     String sortBy = 'recommendedScore',
     String primaryTag = 'girls',
   }) async {
+    final uniq = _generateUniq();
+    final apiUrl =
+        '$apiBase/models?limit=$limit&offset=$offset&primaryTag=$primaryTag'
+        '&filterGroupTags=%5B%5B%22recommended%22%5D%5D'
+        '&sortBy=$sortBy&userRole=user&nic=true&rcmGrp=A'
+        '&rbCnGr=true&iem=true&decMb=true&ctryTop=true'
+        '&mlfv=false&rectf=false&uniq=$uniq';
+
+    // 1) 优先用后台 WebView 拉（绕过 CF）
+    final viaWeb = await _fetchModelsViaWebView(apiUrl);
+    if (viaWeb.isNotEmpty) return viaWeb;
+
+    // 2) 尝试直接 HTTP
     try {
-      final uniq = _generateUniq();
-      final uri = Uri.parse(
-          '$apiBase/models?limit=$limit&offset=$offset&primaryTag=$primaryTag'
-          '&filterGroupTags=%5B%5B%22recommended%22%5D%5D'
-          '&sortBy=$sortBy&userRole=user&nic=true&rcmGrp=A'
-          '&rbCnGr=true&iem=true&decMb=true&ctryTop=true'
-          '&mlfv=false&rectf=false&uniq=$uniq');
       final response = await http
-          .get(uri, headers: _headers)
+          .get(Uri.parse(apiUrl), headers: _headers)
           .timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
@@ -165,17 +172,32 @@ class ApiService {
             .toList();
         if (parsed.isNotEmpty) return parsed;
       }
+    } catch (_) {}
 
+    // 3) V2 端点
+    try {
       final v2 = await _getModelsV2(limit: limit, primaryTag: primaryTag);
       if (v2.isNotEmpty) return v2;
+    } catch (_) {}
 
-      return await _getModelsFromAsset();
-    } catch (e) {
-      try {
-        final v2 = await _getModelsV2(limit: limit, primaryTag: primaryTag);
-        if (v2.isNotEmpty) return v2;
-      } catch (_) {}
-      return await _getModelsFromAsset();
+    // 4) 兜底
+    return await _getModelsFromAsset();
+  }
+
+  Future<List<ModelData>> _fetchModelsViaWebView(String url) async {
+    try {
+      final raw = await WebDataFetcher().fetchJson(url);
+      if (raw == null || raw.isEmpty) return [];
+      // CF challenge 返回 HTML，不是 JSON
+      if (raw.trimLeft().startsWith('<')) return [];
+      final data = jsonDecode(raw);
+      final List<dynamic> models = data['models'] ?? [];
+      return models
+          .map((m) => ModelData.fromJson(m as Map<String, dynamic>))
+          .where((m) => m.status == 'public' || m.isLive)
+          .toList();
+    } catch (_) {
+      return [];
     }
   }
 
@@ -232,16 +254,19 @@ class ApiService {
   }
 
   Future<List<ModelData>> searchModels(String query) async {
-    try {
-      final uniq = _generateUniq();
-      final uri = Uri.parse(
-          '$apiBase/models?limit=50&offset=0&primaryTag=girls'
-          '&sortBy=recommendedScore&q=$query&userRole=user'
-          '&nic=true&uniq=$uniq');
-      final response = await http
-          .get(uri, headers: _headers)
-          .timeout(const Duration(seconds: 8));
+    final uniq = _generateUniq();
+    final url =
+        '$apiBase/models?limit=50&offset=0&primaryTag=girls'
+        '&sortBy=recommendedScore&q=${Uri.encodeQueryComponent(query)}'
+        '&userRole=user&nic=true&uniq=$uniq';
 
+    final viaWeb = await _fetchModelsViaWebView(url);
+    if (viaWeb.isNotEmpty) return viaWeb;
+
+    try {
+      final response = await http
+          .get(Uri.parse(url), headers: _headers)
+          .timeout(const Duration(seconds: 8));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final List<dynamic> models = data['models'] ?? [];
@@ -250,9 +275,8 @@ class ApiService {
             .toList();
         if (parsed.isNotEmpty) return parsed;
       }
-    } catch (e) {
-      // fall through to asset filter
-    }
+    } catch (_) {}
+
     final all = await _getModelsFromAsset();
     final q = query.toLowerCase();
     return all
@@ -261,21 +285,28 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>?> getBroadcastInfo(String username) async {
-    try {
-      final uniq = _generateUniq();
-      final uri =
-          Uri.parse('$apiBase/v1/broadcasts/$username?uniq=$uniq');
-      final response = await http
-          .get(uri, headers: _headers)
-          .timeout(const Duration(seconds: 6));
+    final uniq = _generateUniq();
+    final url = '$apiBase/v1/broadcasts/$username?uniq=$uniq';
 
+    // WebView 优先
+    try {
+      final raw = await WebDataFetcher().fetchJson(url);
+      if (raw != null && raw.isNotEmpty && !raw.trimLeft().startsWith('<')) {
+        final data = jsonDecode(raw);
+        final item = data['item'];
+        if (item is Map<String, dynamic>) return item;
+      }
+    } catch (_) {}
+
+    try {
+      final response = await http
+          .get(Uri.parse(url), headers: _headers)
+          .timeout(const Duration(seconds: 6));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         return data['item'] as Map<String, dynamic>?;
       }
-    } catch (e) {
-      // Silently fail
-    }
+    } catch (_) {}
     return null;
   }
 

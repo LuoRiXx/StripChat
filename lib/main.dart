@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import 'services/auth_service.dart';
 import 'services/favorites_service.dart';
+import 'services/web_data_fetcher.dart';
 import 'pages/home_page.dart';
-import 'pages/login_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,11 +19,15 @@ void main() async {
   await authService.init();
   await favoritesService.init();
 
+  // 预初始化后台 WebView 拉真实数据
+  WebDataFetcher().initController();
+
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: authService),
         ChangeNotifierProvider.value(value: favoritesService),
+        ChangeNotifierProvider.value(value: WebDataFetcher()),
       ],
       child: const StripChatApp(),
     ),
@@ -63,14 +68,29 @@ class StripChatApp extends StatelessWidget {
           ),
         ),
       ),
-      home: Consumer<AuthService>(
-        builder: (context, auth, _) {
-          if (auth.isLoggedIn) {
-            return const HomePage();
-          }
-          return const LoginPage();
-        },
-      ),
+      home: const HomePage(),
+      builder: (context, child) {
+        return Stack(
+          children: [
+            if (child != null) child,
+            // 不可见的后台 WebView：维持 stripchat session、拉真实数据
+            Positioned(
+              left: -2000,
+              top: -2000,
+              width: 1,
+              height: 1,
+              child: IgnorePointer(
+                child: Opacity(
+                  opacity: 0,
+                  child: WebViewWidget(
+                    controller: WebDataFetcher().initController(),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
