@@ -10,18 +10,18 @@ import '../services/api_service.dart';
 import '../services/favorites_service.dart';
 import '../widgets/danmaku_layer.dart';
 
+enum _DanmakuMode { off, third, full }
+
 class LiveRoomPage extends StatefulWidget {
   final ModelData model;
   final List<ModelData> playlist;
   final int startIndex;
-
   const LiveRoomPage({
     super.key,
     required this.model,
     this.playlist = const [],
     this.startIndex = 0,
   });
-
   @override
   State<LiveRoomPage> createState() => _LiveRoomPageState();
 }
@@ -37,7 +37,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
   WebViewController? _controller;
   Timer? _chatTimer;
   Timer? _hideControlsTimer;
-  _DanmakuMode _danmakuMode = _DanmakuMode.third;
+  _DanmakuMode _danmakuMode = _DanmakuMode.full;
   bool _isFullscreen = false;
   bool _showControls = true;
   bool _isLoading = true;
@@ -47,11 +47,12 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
   @override
   void initState() {
     super.initState();
-    _playlist = widget.playlist.isNotEmpty ? List.from(widget.playlist) : [widget.model];
+    _playlist = widget.playlist.isNotEmpty
+        ? List.from(widget.playlist)
+        : [widget.model];
     _currentIndex = widget.startIndex.clamp(0, _playlist.length - 1);
     _currentModel = _playlist[_currentIndex];
     _initController();
-    _startAutoHideControls();
     Future.microtask(_ensureCurrentLiveAndLoad);
   }
 
@@ -85,7 +86,6 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
             if (mounted) setState(() => _progress = value / 100);
           },
           onPageFinished: (_) {
-            _injectPlayerStyle();
             if (mounted) setState(() => _isLoading = false);
             _startChatPolling();
           },
@@ -104,10 +104,9 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
       setState(() => _tip = '${_currentModel.username} 未开播，已跳过');
       await _goToNextLive(forward: true);
     } else {
-      setState(() {
-        _isLoading = false;
-        _tip = '${_currentModel.username} 当前未开播';
-      });
+      // 单个主播且未开播，仍然加载页面（用户也许想看个人主页）
+      _loadModel(_currentModel);
+      setState(() => _tip = '${_currentModel.username} 当前未开播');
     }
   }
 
@@ -137,17 +136,8 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
       _progress = 0;
       _tip = null;
     });
-    _controller?.loadRequest(Uri.parse('https://zh.stripchat.com/${model.username}'));
-  }
-
-  void _injectPlayerStyle() {
-    _controller?.runJavaScript('''
-      (function(){
-        var style = document.createElement('style');
-        style.innerHTML = 'header,footer,nav,.header,.footer,.sidebar,.model-list,.categories-bar,.bottom-bar,[class*=banner],[class*=Banner],[class*=promo],[class*=Promo]{display:none!important}body{margin:0!important;background:#000!important;overflow:hidden!important}video,[class*=player],[class*=Player],[class*=broadcast],[class*=Broadcast]{width:100vw!important;height:100vh!important;max-width:100vw!important;max-height:100vh!important;object-fit:contain!important;background:#000!important}';
-        document.head.appendChild(style);
-      })();
-    ''');
+    _controller
+        ?.loadRequest(Uri.parse('https://zh.stripchat.com/${model.username}'));
   }
 
   Future<void> _goToNextLive({required bool forward}) async {
@@ -175,7 +165,8 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
 
   Future<void> _goRandomLive() async {
     if (_playlist.length <= 1) return;
-    final indexes = List<int>.generate(_playlist.length, (i) => i)..shuffle(Random());
+    final indexes = List<int>.generate(_playlist.length, (i) => i)
+      ..shuffle(Random());
     for (final idx in indexes.where((i) => i != _currentIndex)) {
       final model = _playlist[idx];
       if (await _isLive(model)) {
@@ -194,7 +185,11 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
       DeviceOrientation.landscapeRight,
     ]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    setState(() => _isFullscreen = true);
+    setState(() {
+      _isFullscreen = true;
+      _showControls = true;
+    });
+    _startAutoHideControls();
   }
 
   void _exitFullscreen() {
@@ -209,15 +204,15 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
   void _cycleDanmakuMode() {
     setState(() {
       switch (_danmakuMode) {
-        case _DanmakuMode.third:
-          _danmakuMode = _DanmakuMode.full;
-          break;
         case _DanmakuMode.full:
+          _danmakuMode = _DanmakuMode.third;
+          break;
+        case _DanmakuMode.third:
           _danmakuMode = _DanmakuMode.off;
           _danmakuKey.currentState?.clear();
           break;
         case _DanmakuMode.off:
-          _danmakuMode = _DanmakuMode.third;
+          _danmakuMode = _DanmakuMode.full;
           break;
       }
     });
@@ -235,12 +230,13 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
     if (_showControls) _startAutoHideControls();
   }
 
-  void _onDoubleTap(TapDownDetails details) {
+  void _onDoubleTapPortrait(Offset position) {
     final favorites = FavoritesService();
     if (!favorites.isFavorite(_currentModel.id)) {
       favorites.addFavorite(_currentModel);
     }
-    final heart = _HeartAnim(DateTime.now().microsecondsSinceEpoch, details.localPosition);
+    final heart =
+        _HeartAnim(DateTime.now().microsecondsSinceEpoch, position);
     setState(() => _hearts.add(heart));
     Future.delayed(const Duration(milliseconds: 900), () {
       if (mounted) setState(() => _hearts.removeWhere((h) => h.id == heart.id));
@@ -254,13 +250,15 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
   }
 
   Future<void> _pollChat() async {
-    if (_danmakuMode == _DanmakuMode.off || !mounted) return;
+    // 弹幕只在全屏才用，竖屏不需要轮询
+    if (!_isFullscreen || _danmakuMode == _DanmakuMode.off || !mounted) return;
     final messages = await _api.getChatMessages(_currentModel.id);
     if (!mounted) return;
     for (final msg in messages.take(8)) {
       final text = (msg['message'] ?? msg['text'] ?? '').toString().trim();
       if (text.isEmpty) continue;
-      final user = (msg['username'] ?? msg['user']?['username'] ?? '').toString();
+      final user =
+          (msg['username'] ?? msg['user']?['username'] ?? '').toString();
       final key = '$user|$text';
       if (!_seenMessages.add(key)) continue;
       _danmakuKey.currentState?.push(user.isEmpty ? text : '$user: $text');
@@ -269,12 +267,12 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
 
   String get _danmakuLabel {
     switch (_danmakuMode) {
-      case _DanmakuMode.third:
-        return '弹幕1/3';
       case _DanmakuMode.full:
         return '全屏弹幕';
+      case _DanmakuMode.third:
+        return '弹幕1/3';
       case _DanmakuMode.off:
-        return '弹幕关闭';
+        return '关闭弹幕';
     }
   }
 
@@ -291,99 +289,86 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
 
   @override
   Widget build(BuildContext context) {
-    return _isFullscreen ? _buildFullscreen() : _buildPortrait();
+    return PopScope(
+      canPop: !_isFullscreen,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _isFullscreen) _exitFullscreen();
+      },
+      child: _isFullscreen ? _buildFullscreen() : _buildPortrait(),
+    );
   }
 
+  // ====== 竖屏：原 stripchat 网页（含视频+原生聊天） + 浮动顶栏 + 双击收藏 ======
   Widget _buildPortrait() {
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
-        child: Column(
+        bottom: false,
+        child: Stack(
           children: [
-            _topBar(),
-            _videoBox(aspectRatio: 16 / 9, fullscreen: false),
-            if (_tip != null) _tipBar(),
-            _controlBar(compact: false),
-            Expanded(child: _modelInfo()),
+            // 1. 原网页：占满整个 body，stripchat 自己布局视频和聊天
+            Positioned.fill(
+              child: _controller != null
+                  ? WebViewWidget(controller: _controller!)
+                  : const ColoredBox(color: Colors.black),
+            ),
+            // 2. 双击检测层（透明，不消费单击，让 WebView 仍可交互）
+            Positioned.fill(
+              child: _DoubleTapDetector(
+                onDoubleTap: _onDoubleTapPortrait,
+                child: const SizedBox.expand(),
+              ),
+            ),
+            // 3. 心动画
+            ..._hearts.map((h) => _HeartWidget(key: ValueKey(h.id), anim: h)),
+            // 4. 顶部浮动控制栏
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: _portraitTopBar(),
+            ),
+            // 5. 加载进度
+            if (_isLoading)
+              Positioned(
+                top: 56,
+                left: 0,
+                right: 0,
+                child: LinearProgressIndicator(
+                  value: _progress > 0 ? _progress : null,
+                  minHeight: 2,
+                  backgroundColor: Colors.black.withValues(alpha: 0.2),
+                  valueColor:
+                      const AlwaysStoppedAnimation(Color(0xFFFF4081)),
+                ),
+              ),
+            // 6. 提示
+            if (_tip != null)
+              Positioned(
+                top: 64,
+                left: 16,
+                right: 16,
+                child: _smallTip(),
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildFullscreen() {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          Positioned.fill(child: _videoContent(fullscreen: true)),
-          Positioned.fill(child: _gestureLayer()),
-          ..._hearts.map((h) => _HeartWidget(key: ValueKey(h.id), anim: h)),
-          if (_showControls) _fullscreenControls(),
-          if (_tip != null) Positioned(left: 20, bottom: 74, child: _smallTip()),
-        ],
-      ),
-    );
-  }
-
-  Widget _videoBox({required double aspectRatio, required bool fullscreen}) {
-    return AspectRatio(
-      aspectRatio: aspectRatio,
-      child: Stack(
-        children: [
-          Positioned.fill(child: _videoContent(fullscreen: fullscreen)),
-          Positioned.fill(child: _gestureLayer()),
-          ..._hearts.map((h) => _HeartWidget(key: ValueKey(h.id), anim: h)),
-        ],
-      ),
-    );
-  }
-
-  Widget _videoContent({required bool fullscreen}) {
-    return Stack(
-      children: [
-        if (_controller != null) Positioned.fill(child: WebViewWidget(controller: _controller!)),
-        if (_danmakuMode != _DanmakuMode.off)
-          Positioned.fill(
-            child: DanmakuLayer(
-              key: _danmakuKey,
-              trackCount: _danmakuMode == _DanmakuMode.third ? 3 : (fullscreen ? 8 : 5),
-              speed: fullscreen ? 125 : 105,
-              opacity: 0.82,
-              fontSize: fullscreen ? 16 : 14,
-              heightFraction: _danmakuMode == _DanmakuMode.third ? 1 / 3 : 1,
-              verticalAlign: -1,
-            ),
-          ),
-        if (_isLoading)
-          Center(
-            child: CircularProgressIndicator(
-              value: _progress > 0 ? _progress : null,
-              color: const Color(0xFFFF4081),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _gestureLayer() {
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: _toggleControls,
-      onDoubleTapDown: _onDoubleTap,
-      onDoubleTap: () {},
-      onHorizontalDragEnd: (details) {
-        final velocity = details.primaryVelocity;
-        if (velocity == null) return;
-        if (velocity < -300) _goToNextLive(forward: true);
-        if (velocity > 300) _goToNextLive(forward: false);
-      },
-    );
-  }
-
-  Widget _topBar() {
+  Widget _portraitTopBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.6),
+            Colors.transparent,
+          ],
+        ),
+      ),
       child: Row(
         children: [
           IconButton(
@@ -393,41 +378,103 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
           Expanded(
             child: Text(
               _currentModel.username,
-              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
               overflow: TextOverflow.ellipsis,
             ),
           ),
           IconButton(
-            icon: Icon(_danmakuIcon, color: _danmakuMode == _DanmakuMode.off ? Colors.white54 : const Color(0xFFFF4081)),
-            onPressed: _cycleDanmakuMode,
+            tooltip: '上一个',
+            icon: const Icon(Icons.skip_previous_rounded, color: Colors.white),
+            onPressed: () => _goToNextLive(forward: false),
+          ),
+          IconButton(
+            tooltip: '下一个',
+            icon: const Icon(Icons.skip_next_rounded, color: Colors.white),
+            onPressed: () => _goToNextLive(forward: true),
           ),
           Consumer<FavoritesService>(
             builder: (context, fav, _) {
               final liked = fav.isFavorite(_currentModel.id);
               return IconButton(
-                icon: Icon(liked ? Icons.favorite : Icons.favorite_border, color: liked ? const Color(0xFFFF4081) : Colors.white),
+                tooltip: liked ? '已收藏' : '收藏',
+                icon: Icon(
+                  liked ? Icons.favorite : Icons.favorite_border,
+                  color: liked ? const Color(0xFFFF4081) : Colors.white,
+                ),
                 onPressed: () => fav.toggleFavorite(_currentModel),
               );
             },
+          ),
+          IconButton(
+            tooltip: '全屏',
+            icon: const Icon(Icons.fullscreen_rounded, color: Colors.white),
+            onPressed: _enterFullscreen,
           ),
         ],
       ),
     );
   }
 
-  Widget _controlBar({required bool compact}) {
-    return Container(
-      color: const Color(0xFF1A1A2E),
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+  // ====== 横屏全屏：WebView + 弹幕（仅此模式有）+ 浮动控制条 ======
+  Widget _buildFullscreen() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: Stack(
         children: [
-          _controlButton(Icons.skip_previous_rounded, '上一个', () => _goToNextLive(forward: false)),
-          _controlButton(Icons.shuffle_rounded, '随机', _goRandomLive),
-          _controlButton(Icons.skip_next_rounded, '下一个', () => _goToNextLive(forward: true)),
-          _controlButton(_danmakuIcon, _danmakuLabel, _cycleDanmakuMode),
-          _controlButton(Icons.refresh_rounded, '刷新', () => _loadModel(_currentModel)),
-          _controlButton(Icons.fullscreen_rounded, '全屏', _enterFullscreen),
+          // 1. WebView 占满
+          Positioned.fill(
+            child: _controller != null
+                ? WebViewWidget(controller: _controller!)
+                : const ColoredBox(color: Colors.black),
+          ),
+          // 2. 弹幕层（仅在全屏才显示）
+          if (_danmakuMode != _DanmakuMode.off)
+            Positioned.fill(
+              child: DanmakuLayer(
+                key: _danmakuKey,
+                trackCount: _danmakuMode == _DanmakuMode.third ? 3 : 8,
+                speed: 130,
+                opacity: 0.85,
+                fontSize: 16,
+                heightFraction:
+                    _danmakuMode == _DanmakuMode.third ? 1 / 3 : 1,
+                verticalAlign: -1,
+              ),
+            ),
+          // 3. 手势层：单击切换控制条 + 横滑切换主播
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _toggleControls,
+              onHorizontalDragEnd: (details) {
+                final v = details.primaryVelocity;
+                if (v == null) return;
+                if (v < -300) _goToNextLive(forward: true);
+                if (v > 300) _goToNextLive(forward: false);
+              },
+            ),
+          ),
+          // 4. 控制条
+          if (_showControls) _fullscreenControls(),
+          // 5. 加载进度
+          if (_isLoading)
+            const Positioned(
+              top: 60,
+              left: 0,
+              right: 0,
+              child: LinearProgressIndicator(
+                minHeight: 2,
+                color: Color(0xFFFF4081),
+                backgroundColor: Colors.black26,
+              ),
+            ),
+          // 6. 提示
+          if (_tip != null)
+            Positioned(left: 20, bottom: 80, child: _smallTip()),
         ],
       ),
     );
@@ -436,35 +483,60 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
   Widget _fullscreenControls() {
     return Stack(
       children: [
+        // 顶部
         Positioned(
           top: 0,
           left: 0,
           right: 0,
           child: Container(
-            padding: const EdgeInsets.fromLTRB(8, 6, 8, 26),
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Colors.black.withValues(alpha: 0.75), Colors.transparent],
+                colors: [
+                  Colors.black.withValues(alpha: 0.75),
+                  Colors.transparent,
+                ],
               ),
             ),
             child: Row(
               children: [
-                IconButton(icon: const Icon(Icons.arrow_back, color: Colors.white), onPressed: _exitFullscreen),
+                IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  onPressed: _exitFullscreen,
+                ),
                 Expanded(
                   child: Text(
                     _currentModel.username,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                IconButton(icon: Icon(_danmakuIcon, color: _danmakuMode == _DanmakuMode.off ? Colors.white54 : const Color(0xFFFF4081)), onPressed: _cycleDanmakuMode),
+                IconButton(
+                  tooltip: _danmakuLabel,
+                  icon: Icon(
+                    _danmakuIcon,
+                    color: _danmakuMode == _DanmakuMode.off
+                        ? Colors.white54
+                        : const Color(0xFFFF4081),
+                  ),
+                  onPressed: _cycleDanmakuMode,
+                ),
                 Consumer<FavoritesService>(
                   builder: (context, fav, _) {
                     final liked = fav.isFavorite(_currentModel.id);
                     return IconButton(
-                      icon: Icon(liked ? Icons.favorite : Icons.favorite_border, color: liked ? const Color(0xFFFF4081) : Colors.white),
+                      icon: Icon(
+                        liked ? Icons.favorite : Icons.favorite_border,
+                        color: liked
+                            ? const Color(0xFFFF4081)
+                            : Colors.white,
+                      ),
                       onPressed: () => fav.toggleFavorite(_currentModel),
                     );
                   },
@@ -473,27 +545,36 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
             ),
           ),
         ),
+        // 底部
         Positioned(
           left: 0,
           right: 0,
           bottom: 0,
           child: Container(
-            padding: const EdgeInsets.fromLTRB(8, 24, 8, 8),
+            padding: const EdgeInsets.fromLTRB(8, 24, 8, 12),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.bottomCenter,
                 end: Alignment.topCenter,
-                colors: [Colors.black.withValues(alpha: 0.75), Colors.transparent],
+                colors: [
+                  Colors.black.withValues(alpha: 0.75),
+                  Colors.transparent,
+                ],
               ),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _miniControl(Icons.skip_previous_rounded, '上一个', () => _goToNextLive(forward: false)),
+                _miniControl(Icons.skip_previous_rounded, '上一个',
+                    () => _goToNextLive(forward: false)),
                 _miniControl(Icons.shuffle_rounded, '随机', _goRandomLive),
-                _miniControl(Icons.skip_next_rounded, '下一个', () => _goToNextLive(forward: true)),
+                _miniControl(Icons.skip_next_rounded, '下一个',
+                    () => _goToNextLive(forward: true)),
                 _miniControl(_danmakuIcon, _danmakuLabel, _cycleDanmakuMode),
-                _miniControl(Icons.fullscreen_exit_rounded, '退出', _exitFullscreen),
+                _miniControl(Icons.refresh_rounded, '刷新',
+                    () => _loadModel(_currentModel)),
+                _miniControl(Icons.fullscreen_exit_rounded, '退出全屏',
+                    _exitFullscreen),
               ],
             ),
           ),
@@ -502,124 +583,41 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
     );
   }
 
-  Widget _controlButton(IconData icon, String label, VoidCallback onTap) {
+  Widget _miniControl(IconData icon, String label, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: Colors.white, size: 21),
+            Icon(icon, color: Colors.white, size: 22),
             const SizedBox(height: 2),
-            Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10)),
+            Text(label,
+                style: const TextStyle(color: Colors.white70, fontSize: 11)),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _miniControl(IconData icon, String label, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: Colors.white, size: 22),
-          const SizedBox(height: 2),
-          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10)),
-        ],
-      ),
-    );
-  }
-
-  Widget _tipBar() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      color: Colors.orange.withValues(alpha: 0.18),
-      child: Text(_tip!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.orangeAccent, fontSize: 13)),
     );
   }
 
   Widget _smallTip() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.55), borderRadius: BorderRadius.circular(8)),
-      child: Text(_tip!, style: const TextStyle(color: Colors.orangeAccent, fontSize: 12)),
-    );
-  }
-
-  Widget _modelInfo() {
-    return Container(
-      width: double.infinity,
-      color: const Color(0xFF121212),
-      padding: const EdgeInsets.all(16),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 24,
-                  backgroundColor: const Color(0xFF2A2A3E),
-                  backgroundImage: _currentModel.fullAvatarUrl.isNotEmpty ? NetworkImage(_currentModel.fullAvatarUrl) : null,
-                  child: _currentModel.fullAvatarUrl.isEmpty ? const Icon(Icons.person, color: Colors.white54) : null,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(_currentModel.username, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${_currentModel.viewerCount} 观看  ${_currentIndex + 1}/${_playlist.length}',
-                        style: const TextStyle(color: Colors.white54, fontSize: 13),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (_currentModel.isCurrentlyLive) _tag('正在直播', Colors.redAccent),
-                if (_currentModel.isHd) _tag('HD', Colors.blueAccent),
-                if (_currentModel.isNew) _tag('新人', Colors.greenAccent),
-                if (_currentModel.isMobile) _tag('手机直播', Colors.orangeAccent),
-                if (_currentModel.isLovense) _tag('Lovense', Colors.pinkAccent),
-                _tag(_danmakuLabel, const Color(0xFFFF4081)),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text('竖屏双击视频可快速收藏，左右滑动可切换主播。', style: TextStyle(color: Colors.white.withValues(alpha: 0.45), fontSize: 13)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _tag(String text, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withValues(alpha: 0.35)),
+        color: Colors.black.withValues(alpha: 0.65),
+        borderRadius: BorderRadius.circular(8),
       ),
-      child: Text(text, style: TextStyle(color: color, fontSize: 12)),
+      child: Text(
+        _tip ?? '',
+        style: const TextStyle(color: Colors.orangeAccent, fontSize: 13),
+      ),
     );
   }
 }
 
-enum _DanmakuMode { off, third, full }
-
+// ============== 心形动画 ==============
 class _HeartAnim {
   final int id;
   final Offset position;
@@ -629,12 +627,12 @@ class _HeartAnim {
 class _HeartWidget extends StatefulWidget {
   final _HeartAnim anim;
   const _HeartWidget({super.key, required this.anim});
-
   @override
   State<_HeartWidget> createState() => _HeartWidgetState();
 }
 
-class _HeartWidgetState extends State<_HeartWidget> with SingleTickerProviderStateMixin {
+class _HeartWidgetState extends State<_HeartWidget>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
   late final Animation<double> _scale;
   late final Animation<double> _opacity;
@@ -643,14 +641,18 @@ class _HeartWidgetState extends State<_HeartWidget> with SingleTickerProviderSta
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 850));
+    _controller = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 850));
     _scale = TweenSequence<double>([
       TweenSequenceItem(tween: Tween(begin: 0, end: 1.35), weight: 35),
       TweenSequenceItem(tween: Tween(begin: 1.35, end: 1.0), weight: 25),
       TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.15), weight: 40),
     ]).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
-    _opacity = Tween<double>(begin: 1, end: 0).animate(CurvedAnimation(parent: _controller, curve: const Interval(0.55, 1, curve: Curves.easeIn)));
-    _offset = Tween<Offset>(begin: Offset.zero, end: const Offset(0, -72)).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
+    _opacity = Tween<double>(begin: 1, end: 0).animate(CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0.55, 1, curve: Curves.easeIn)));
+    _offset = Tween<Offset>(begin: Offset.zero, end: const Offset(0, -72))
+        .animate(CurvedAnimation(parent: _controller, curve: Curves.easeOut));
     _controller.forward();
   }
 
@@ -668,15 +670,57 @@ class _HeartWidgetState extends State<_HeartWidget> with SingleTickerProviderSta
         return Positioned(
           left: widget.anim.position.dx - 26,
           top: widget.anim.position.dy - 26 + _offset.value.dy,
-          child: Opacity(
-            opacity: _opacity.value,
-            child: Transform.scale(
-              scale: _scale.value,
-              child: const Icon(Icons.favorite, color: Color(0xFFFF4081), size: 52),
+          child: IgnorePointer(
+            child: Opacity(
+              opacity: _opacity.value,
+              child: Transform.scale(
+                scale: _scale.value,
+                child: const Icon(Icons.favorite,
+                    color: Color(0xFFFF4081), size: 52),
+              ),
             ),
           ),
         );
       },
+    );
+  }
+}
+
+// ============== 双击检测：仅观察 PointerDown 时间戳，不消费事件 ==============
+// 这样单击事件可以正常透传给底层 WebView，用户依然能与原网页交互
+class _DoubleTapDetector extends StatefulWidget {
+  final Widget child;
+  final void Function(Offset position) onDoubleTap;
+  const _DoubleTapDetector({required this.child, required this.onDoubleTap});
+  @override
+  State<_DoubleTapDetector> createState() => _DoubleTapDetectorState();
+}
+
+class _DoubleTapDetectorState extends State<_DoubleTapDetector> {
+  DateTime? _lastTapTime;
+  Offset? _lastTapPos;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (event) {
+        final now = DateTime.now();
+        final last = _lastTapTime;
+        final lastPos = _lastTapPos;
+        if (last != null &&
+            lastPos != null &&
+            now.difference(last).inMilliseconds < 320 &&
+            (event.localPosition - lastPos).distance < 36) {
+          widget.onDoubleTap(event.localPosition);
+          _lastTapTime = null;
+          _lastTapPos = null;
+        } else {
+          _lastTapTime = now;
+          _lastTapPos = event.localPosition;
+        }
+      },
+      child: widget.child,
     );
   }
 }

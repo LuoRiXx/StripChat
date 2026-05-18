@@ -62,10 +62,7 @@ class ModelData {
     if (previewUrlThumbSmall.isNotEmpty) {
       return _resolveUrl(previewUrlThumbSmall);
     }
-    // 兜底：用 stripchat 静态封面路径
-    if (id > 0) {
-      return 'https://img.doppiocdn.com/thumbs/$id';
-    }
+    // 没有有效封面就返回空，让 errorWidget 显示占位图，避免拼接错误的 URL
     return '';
   }
 
@@ -210,7 +207,6 @@ class ModelBlock {
     final models = rawModels
         .whereType<Map<String, dynamic>>()
         .map(ModelData.fromJson)
-        .where((m) => m.status == 'public' || m.isLive)
         .toList();
 
     final rawId = (json['id'] ??
