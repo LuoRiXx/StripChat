@@ -36,10 +36,16 @@ class ApiService {
         'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'same-origin',
         'X-Requested-With': 'XMLHttpRequest',
-        if (_jwtToken != null) 'Authorization': 'Bearer $_jwtToken',
-        if (_csrfToken != null) 'X-Csrf-Token': _csrfToken!,
+        if (_jwtToken case final token?) 'Authorization': 'Bearer $token',
+        ..._csrfHeader,
         'Cookie': _buildCookie(),
       };
+
+  Map<String, String> get _csrfHeader {
+    final token = _csrfToken;
+    if (token == null) return {};
+    return {'X-Csrf-Token': token};
+  }
 
   String _buildCookie() {
     final cookies = <String>[];

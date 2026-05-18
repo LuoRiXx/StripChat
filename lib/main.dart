@@ -72,7 +72,7 @@ class StripChatApp extends StatelessWidget {
       builder: (context, child) {
         return Stack(
           children: [
-            if (child != null) child,
+            ?child,
             // 不可见的后台 WebView：维持 stripchat session、拉真实数据
             Positioned(
               left: -2000,

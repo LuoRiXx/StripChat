@@ -21,7 +21,7 @@ class ModelCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.3),
+              color: Colors.black.withValues(alpha: 0.3),
               blurRadius: 8,
               offset: const Offset(0, 4),
             ),
@@ -65,7 +65,7 @@ class ModelCard extends StatelessWidget {
                       end: Alignment.bottomCenter,
                       colors: [
                         Colors.transparent,
-                        Colors.black.withOpacity(0.8),
+                        Colors.black.withValues(alpha: 0.85),
                       ],
                     ),
                   ),
@@ -91,7 +91,7 @@ class ModelCard extends StatelessWidget {
                             Text(
                               '${model.age}',
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.8),
+                                color: Colors.white.withValues(alpha: 0.85),
                                 fontSize: 11,
                               ),
                             ),
@@ -101,13 +101,13 @@ class ModelCard extends StatelessWidget {
                             Icon(
                               Icons.visibility,
                               size: 12,
-                              color: Colors.white.withOpacity(0.7),
+                              color: Colors.white.withValues(alpha: 0.85),
                             ),
                             const SizedBox(width: 2),
                             Text(
                               '${model.viewerCount}',
                               style: TextStyle(
-                                color: Colors.white.withOpacity(0.8),
+                                color: Colors.white.withValues(alpha: 0.85),
                                 fontSize: 11,
                               ),
                             ),
@@ -118,8 +118,33 @@ class ModelCard extends StatelessWidget {
                   ),
                 ),
               ),
+              // 未开播灰色蒙层
+              if (!model.isCurrentlyLive)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    child: const Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.videocam_off,
+                              color: Colors.white70, size: 28),
+                          SizedBox(height: 4),
+                          Text(
+                            '未开播',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               // Live badge
-              if (model.isLive || model.status == 'public')
+              if (model.isCurrentlyLive)
                 Positioned(
                   top: 8,
                   left: 8,
@@ -131,14 +156,34 @@ class ModelCard extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: Colors.red,
                       borderRadius: BorderRadius.circular(4),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.red.withValues(alpha: 0.5),
+                          blurRadius: 6,
+                        ),
+                      ],
                     ),
-                    child: const Text(
-                      'LIVE',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 3),
+                        const Text(
+                          'LIVE',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),

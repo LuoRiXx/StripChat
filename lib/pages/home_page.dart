@@ -8,6 +8,7 @@ import '../services/web_data_fetcher.dart';
 import '../widgets/model_card.dart';
 import 'live_room_page.dart';
 import 'favorites_page.dart';
+import 'category_detail_page.dart';
 import 'web_login_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -330,6 +331,18 @@ class _ModelListTabState extends State<_ModelListTab>
           return _BlockSection(
             block: block,
             onTapModel: (m) => _openLiveRoom(m, allModels),
+            onMore: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => CategoryDetailPage(
+                    title: block.title,
+                    primaryTag: _currentTag,
+                    initialModels: block.models,
+                  ),
+                ),
+              );
+            },
           );
         },
       ),
@@ -383,8 +396,9 @@ class _ModelListTabState extends State<_ModelListTab>
 class _BlockSection extends StatelessWidget {
   final ModelBlock block;
   final void Function(ModelData) onTapModel;
+  final VoidCallback? onMore;
 
-  const _BlockSection({required this.block, required this.onTapModel});
+  const _BlockSection({required this.block, required this.onTapModel, this.onMore});
 
   @override
   Widget build(BuildContext context) {
@@ -423,6 +437,29 @@ class _BlockSection extends StatelessWidget {
                     fontSize: 12,
                   ),
                 ),
+                if (onMore != null) ...[                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: onMore,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '更多',
+                          style: TextStyle(
+                            color: const Color(0xFFFF4081).withValues(alpha: 0.9),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        Icon(
+                          Icons.chevron_right,
+                          color: const Color(0xFFFF4081).withValues(alpha: 0.9),
+                          size: 18,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -431,8 +468,48 @@ class _BlockSection extends StatelessWidget {
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: 12),
-              itemCount: block.models.length,
+              itemCount: block.models.length + (onMore != null ? 1 : 0),
               itemBuilder: (context, idx) {
+                // 最后一个元素："更多"按钮
+                if (idx >= block.models.length) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: SizedBox(
+                      width: 100,
+                      child: GestureDetector(
+                        onTap: onMore,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E1E2E),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFFFF4081).withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.arrow_forward_rounded,
+                                color: const Color(0xFFFF4081).withValues(alpha: 0.8),
+                                size: 32,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                '查看更多',
+                                style: TextStyle(
+                                  color: const Color(0xFFFF4081).withValues(alpha: 0.8),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }
                 final model = block.models[idx];
                 return Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
