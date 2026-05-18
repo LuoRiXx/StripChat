@@ -298,10 +298,10 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
     );
   }
 
-  // ====== 竖屏：原 stripchat 网页（含视频+原生聊天） + 浮动顶栏 + 双击收藏 ======
+  // ====== 竖屏：原 stripchat 网页 + 浮动顶栏（返回/标题/全屏） + 实底底栏（操作按钮） ======
   Widget _buildPortrait() {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFF0F0F1F),
       body: SafeArea(
         bottom: false,
         child: Stack(
@@ -321,7 +321,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
             ),
             // 3. 心动画
             ..._hearts.map((h) => _HeartWidget(key: ValueKey(h.id), anim: h)),
-            // 4. 顶部浮动控制栏
+            // 4. 顶部浮动控制栏（返回 / 用户名 / 全屏）
             Positioned(
               top: 0,
               left: 0,
@@ -331,7 +331,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
             // 5. 加载进度
             if (_isLoading)
               Positioned(
-                top: 56,
+                top: 52,
                 left: 0,
                 right: 0,
                 child: LinearProgressIndicator(
@@ -345,7 +345,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
             // 6. 提示
             if (_tip != null)
               Positioned(
-                top: 64,
+                top: 60,
                 left: 16,
                 right: 16,
                 child: _smallTip(),
@@ -353,18 +353,20 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
           ],
         ),
       ),
+      // 实底底栏：上一个/随机/下一个/刷新/收藏，独立空间不遮挡网页
+      bottomNavigationBar: _portraitBottomBar(),
     );
   }
 
   Widget _portraitTopBar() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.black.withValues(alpha: 0.6),
+            Colors.black.withValues(alpha: 0.65),
             Colors.transparent,
           ],
         ),
@@ -372,6 +374,7 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
       child: Row(
         children: [
           IconButton(
+            tooltip: '返回',
             icon: const Icon(Icons.arrow_back, color: Colors.white),
             onPressed: () => Navigator.pop(context),
           ),
@@ -382,39 +385,101 @@ class _LiveRoomPageState extends State<LiveRoomPage> {
                 color: Colors.white,
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
+                shadows: [
+                  Shadow(color: Colors.black54, blurRadius: 4),
+                ],
               ),
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          IconButton(
-            tooltip: '上一个',
-            icon: const Icon(Icons.skip_previous_rounded, color: Colors.white),
-            onPressed: () => _goToNextLive(forward: false),
-          ),
-          IconButton(
-            tooltip: '下一个',
-            icon: const Icon(Icons.skip_next_rounded, color: Colors.white),
-            onPressed: () => _goToNextLive(forward: true),
-          ),
-          Consumer<FavoritesService>(
-            builder: (context, fav, _) {
-              final liked = fav.isFavorite(_currentModel.id);
-              return IconButton(
-                tooltip: liked ? '已收藏' : '收藏',
-                icon: Icon(
-                  liked ? Icons.favorite : Icons.favorite_border,
-                  color: liked ? const Color(0xFFFF4081) : Colors.white,
-                ),
-                onPressed: () => fav.toggleFavorite(_currentModel),
-              );
-            },
-          ),
-          IconButton(
-            tooltip: '全屏',
-            icon: const Icon(Icons.fullscreen_rounded, color: Colors.white),
-            onPressed: _enterFullscreen,
+          // 全屏按钮放在右上角
+          Container(
+            margin: const EdgeInsets.only(right: 4),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.45),
+              shape: BoxShape.circle,
+            ),
+            child: IconButton(
+              tooltip: '全屏',
+              icon: const Icon(Icons.fullscreen_rounded, color: Colors.white),
+              onPressed: _enterFullscreen,
+            ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _portraitBottomBar() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF1A1A2E),
+        border: Border(
+          top: BorderSide(color: Color(0xFF2A2A3E), width: 0.6),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black54,
+            blurRadius: 12,
+            offset: Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _bottomAction(Icons.skip_previous_rounded, '上一个',
+                  () => _goToNextLive(forward: false)),
+              _bottomAction(Icons.shuffle_rounded, '随机', _goRandomLive),
+              _bottomAction(Icons.skip_next_rounded, '下一个',
+                  () => _goToNextLive(forward: true)),
+              _bottomAction(Icons.refresh_rounded, '刷新',
+                  () => _loadModel(_currentModel)),
+              Consumer<FavoritesService>(
+                builder: (context, fav, _) {
+                  final liked = fav.isFavorite(_currentModel.id);
+                  return _bottomAction(
+                    liked ? Icons.favorite : Icons.favorite_border,
+                    liked ? '已收藏' : '收藏',
+                    () => fav.toggleFavorite(_currentModel),
+                    activeColor: liked ? const Color(0xFFFF4081) : null,
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _bottomAction(IconData icon, String label, VoidCallback onTap,
+      {Color? activeColor}) {
+    final color = activeColor ?? Colors.white;
+    final textColor =
+        activeColor ?? Colors.white.withValues(alpha: 0.78);
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: color, size: 24),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: TextStyle(color: textColor, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
